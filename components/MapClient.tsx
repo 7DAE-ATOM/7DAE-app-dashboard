@@ -5,6 +5,7 @@ import dynamic from "next/dynamic";
 import FilterBar, { type FilterValue } from "@/components/FilterBar";
 import FilterSheet from "@/components/FilterSheet";
 import { filterApplications } from "@/lib/applications";
+import { DEFAULT_FILTERS } from "@/lib/catalogueFilters";
 import { useApplications } from "@/lib/useApplications";
 
 const MapView = dynamic(() => import("@/components/MapView"), { ssr: false });
@@ -57,15 +58,9 @@ function MapLoaded({
   businessCriticalities,
   portfolios,
 }: LoadedProps) {
-  const [filters, setFilters] = useState<FilterValue>({
-    search: "",
-    photo: "all",
-    categories: [],
-    statuses: [],
-    portfolios: [],
-    operator: "",
-    businessCriticalities: [],
-  });
+  // The map keeps its own (non-persisted) filter state, but starts from the
+  // catalogue's defaults so a new axis never has to be duplicated here.
+  const [filters, setFilters] = useState<FilterValue>(DEFAULT_FILTERS);
 
   const visible = useMemo(
     () => filterApplications(applications, filters),

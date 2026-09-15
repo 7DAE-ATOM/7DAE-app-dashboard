@@ -42,7 +42,7 @@ export default function DiscoverClient() {
   /** `?ids=` is a **seed**, read once: the selection the catalogue's "Show in
    * Discover" button captured. Later additions/removals deliberately don't
    * rewrite the URL, so the link stays a stable, shareable entry point. */
-  const { ids: seedIds, truncated } = useMemo(
+  const { ids: seedIds } = useMemo(
     () => parseSeedIds(searchParams.get("ids")),
     [searchParams],
   );
@@ -62,7 +62,7 @@ export default function DiscoverClient() {
     () => (seedApplications.length > 0 ? seedApplications.map(toDiscoverApplicationNode) : undefined),
     [seedApplications],
   );
-  const unresolved = truncated + (loading ? 0 : seedIds.length - seedApplications.length);
+  const unresolved = loading ? 0 : seedIds.length - seedApplications.length;
   const [noticeDismissed, setNoticeDismissed] = useState(false);
 
   const seededRef = useRef(false);
@@ -89,6 +89,12 @@ export default function DiscoverClient() {
   const handleRemove = useCallback((id: string) => {
     setSelected((current) => current.filter((a) => a.id !== id));
     graphRef.current?.removeApplication(id);
+  }, []);
+
+  /** "Hide" on a selected node: the graph has already dropped the node and
+   * pruned what it anchored, so only the chip is left to remove here. */
+  const handleHidden = useCallback((id: string) => {
+    setSelected((current) => current.filter((a) => a.id !== id));
   }, []);
 
   const selectedIds = useMemo(() => new Set(selected.map((a) => a.id)), [selected]);
@@ -120,6 +126,7 @@ export default function DiscoverClient() {
               resolveManagerName={resolveManagerName}
               resolveApplication={resolveApplication}
               seed={seedNodes}
+              onApplicationHidden={handleHidden}
             />
             {/* top-14: below the graph's own seed loading/error strip. */}
             {unresolved > 0 && !noticeDismissed && (

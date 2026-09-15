@@ -1,11 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import FilterBar, { type FilterValue } from "./FilterBar";
 import type {
   ApplicationCategory,
   ApplicationStatus,
+  BusinessCapabilityTree,
   BusinessCriticality,
 } from "@/lib/types";
 
@@ -14,6 +15,11 @@ type Props = {
   statuses: ApplicationStatus[];
   portfolios: string[];
   businessCriticalities: BusinessCriticality[];
+  capabilityTree?: BusinessCapabilityTree | null;
+  capabilityCounts?: Map<string, number>;
+  capabilityResetToken?: number;
+  /** Forwarded to `FilterBar` — same "ACTIONS" row as on desktop. */
+  actions?: ReactNode;
   value: FilterValue;
   onChange: (v: FilterValue) => void;
   count: number;
@@ -24,6 +30,10 @@ export default function FilterSheet({
   statuses,
   portfolios,
   businessCriticalities,
+  capabilityTree,
+  capabilityCounts,
+  capabilityResetToken,
+  actions,
   value,
   onChange,
   count,
@@ -34,6 +44,7 @@ export default function FilterSheet({
     value.statuses.length +
     value.portfolios.length +
     value.businessCriticalities.length +
+    value.businessCapabilityIds.length +
     (value.search ? 1 : 0) +
     (value.operator ? 1 : 0) +
     (value.photo !== "all" ? 1 : 0);
@@ -84,6 +95,10 @@ export default function FilterSheet({
                 statuses={statuses}
                 portfolios={portfolios}
                 businessCriticalities={businessCriticalities}
+                capabilityTree={capabilityTree}
+                capabilityCounts={capabilityCounts}
+                capabilityResetToken={capabilityResetToken}
+                actions={actions}
                 value={value}
                 onChange={onChange}
               />

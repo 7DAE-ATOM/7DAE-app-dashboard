@@ -1,4 +1,5 @@
 import { buildApplicationsQuery } from "./leanix-application-query";
+import { buildBusinessCapabilitiesQuery } from "./leanix-business-capability-query";
 import {
   buildApplicationInterfacesQuery,
   buildApplicationsInterfacesQuery,
@@ -272,10 +273,10 @@ function graphQlError(
   );
 }
 
-type AllFactSheetsResult = {
+type AllFactSheetsResult<N = ApplicationNode> = {
   totalCount: number;
   pageInfo: { hasNextPage: boolean; endCursor: string | null };
-  edges: { node: ApplicationNode }[];
+  edges: { node: N }[];
 };
 
 /** Generic GraphQL POST — returns the full `data` object, untyped beyond
@@ -336,6 +337,36 @@ export async function fetchApplication(
     buildApplicationsQuery({ after, externalId }),
   );
   return nodes[0] ?? null;
+}
+
+/** A BusinessCapability FactSheet, as crawled for the catalogue's hierarchy
+ * filter. `relToParent` uses the shared multi-target edge shape; the data
+ * guarantees a single parent, so only the first edge is ever read. */
+export type BusinessCapabilityNode = {
+  id: string;
+  externalId: { externalId: string } | null;
+  name: string | null;
+  relToParent: { edges: DataObjectEdge[] } | null;
+};
+
+/** Same `hasNextPage`/`endCursor` crawl as `fetchAllApplicationNodes`, with
+ * one deliberate difference: nodes are **not** filtered on `externalId`. A
+ * Business Capability may legitimately have none (`BusinessCapability
+ * .externalId` is nullable) and the tree keys on the technical `id` anyway —
+ * dropping those nodes would tear holes in the hierarchy. */
+export async function fetchAllBusinessCapabilityNodes(): Promise<BusinessCapabilityNode[]> {
+  const nodes: BusinessCapabilityNode[] = [];
+  let after: string | undefined;
+  do {
+    const { allFactSheets: page } = await postGraphQL<{
+      allFactSheets: AllFactSheetsResult<BusinessCapabilityNode>;
+    }>(buildBusinessCapabilitiesQuery({ after }));
+    nodes.push(...page.edges.map((e) => e.node).filter((node) => !!node.id));
+    after = page.pageInfo.hasNextPage
+      ? (page.pageInfo.endCursor ?? undefined)
+      : undefined;
+  } while (after);
+  return nodes;
 }
 
 /** One entry of `GET /api/infos/applications/{externalId}/links`: a neighbouring

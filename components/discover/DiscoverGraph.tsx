@@ -71,6 +71,10 @@ type Props = {
    * applications, `graphRef.current` is still null, so a caller-side effect
    * would silently seed nothing. */
   seed?: DiscoverApplicationNode[];
+  /** Called when "Hide" removes an application that is also a selection
+   * chip, so the toolbar bar drops it too — the graph has already removed
+   * the node itself, this is only the parent's mirror of the selection. */
+  onApplicationHidden?: (id: string) => void;
 };
 
 function boxSizeOf(node: Node): { width: number; height: number } {
@@ -147,7 +151,7 @@ function mergeInterfaceFactSheet(
  * node at the origin) or through the batch `seed` effect below, which lays
  * out a whole catalogue selection in one pass. Never again afterward. */
 const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGraph(
-  { resolveManagerName, resolveApplication, seed },
+  { resolveManagerName, resolveApplication, seed, onApplicationHidden },
   ref,
 ) {
   const [nodes, setNodes] = useState<Node[]>([]);
@@ -665,28 +669,40 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
     [revealInterfaceDependencies],
   );
 
-  const handleHide = useCallback((nodeId: string) => {
-    setContextMenu(null);
-    const node = nodesRef.current.find((n) => n.id === nodeId);
-    if (!node) return;
-    if (node.type === "application") {
-      if (rootIdsRef.current.has(nodeId)) return; // roots only leave via their chip
-      const ownedInterfaceIds = new Set(
-        [...interfaceProviderRef.current.entries()]
-          .filter(([, providerId]) => providerId === nodeId)
-          .map(([ifaceId]) => ifaceId),
-      );
-      for (const id of ownedInterfaceIds) interfaceProviderRef.current.delete(id);
-      setNodes((current) => current.filter((n) => n.id !== nodeId && !ownedInterfaceIds.has(n.id)));
-      setEdgeMeta((current) =>
-        current.filter((e) => e.consumerId !== nodeId && !ownedInterfaceIds.has(e.interfaceId)),
-      );
-    } else {
-      interfaceProviderRef.current.delete(nodeId);
-      setNodes((current) => current.filter((n) => n.id !== nodeId));
-      setEdgeMeta((current) => current.filter((e) => e.interfaceId !== nodeId));
-    }
-  }, []);
+  const handleHide = useCallback(
+    (nodeId: string) => {
+      setContextMenu(null);
+      const node = nodesRef.current.find((n) => n.id === nodeId);
+      if (!node) return;
+      if (node.type === "application") {
+        if (rootIdsRef.current.has(nodeId)) {
+          // A selected root: hiding it is the same operation as removing its
+          // chip (drops the node, then prunes whatever it was anchoring), plus
+          // telling the parent to drop the chip itself.
+          removeApplication(nodeId);
+          onApplicationHidden?.(nodeId);
+          return;
+        }
+        const ownedInterfaceIds = new Set(
+          [...interfaceProviderRef.current.entries()]
+            .filter(([, providerId]) => providerId === nodeId)
+            .map(([ifaceId]) => ifaceId),
+        );
+        for (const id of ownedInterfaceIds) interfaceProviderRef.current.delete(id);
+        setNodes((current) =>
+          current.filter((n) => n.id !== nodeId && !ownedInterfaceIds.has(n.id)),
+        );
+        setEdgeMeta((current) =>
+          current.filter((e) => e.consumerId !== nodeId && !ownedInterfaceIds.has(e.interfaceId)),
+        );
+      } else {
+        interfaceProviderRef.current.delete(nodeId);
+        setNodes((current) => current.filter((n) => n.id !== nodeId));
+        setEdgeMeta((current) => current.filter((e) => e.interfaceId !== nodeId));
+      }
+    },
+    [removeApplication, onApplicationHidden],
+  );
 
   useImperativeHandle(ref, () => ({ addApplication, removeApplication }), [
     addApplication,
@@ -848,7 +864,6 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
           consumersTotal: consumerCounts?.total ?? -1,
           providersShown: providerCounts?.shown ?? -1,
           providersTotal: providerCounts?.total ?? -1,
-          canHide: !rootIdsRef.current.has(n.id),
         });
         if (!cached) {
           // Not fetched yet — go get it, then refresh the menu in place if
@@ -886,7 +901,6 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
           consumersTotal: consumerCounts?.total ?? -1,
           providersShown: 0,
           providersTotal: 0,
-          canHide: true,
         });
         if (!consumerCounts) {
           void fetchInterfaceDependencies(n.id).then((fetched) => {

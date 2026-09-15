@@ -3,10 +3,12 @@
 import { useState } from "react";
 import { useSWRConfig } from "swr";
 import { SWR_KEY_APPLICATIONS } from "@/lib/useApplications";
+import { SWR_KEY_BUSINESS_CAPABILITIES } from "@/lib/useBusinessCapabilityTree";
 import RefreshIcon from "@/components/icons/RefreshIcon";
 
 /**
- * Forces a re-fetch of the applications (the only data with no automatic
+ * Forces a re-fetch of the applications and the Business Capability
+ * hierarchy (the data with no automatic
  * revalidation — see `Providers`). Photo caches are left untouched.
  */
 export default function RefreshButton() {
@@ -17,7 +19,12 @@ export default function RefreshButton() {
     if (spinning) return;
     setSpinning(true);
     try {
-      await mutate(SWR_KEY_APPLICATIONS);
+      await Promise.all([
+        mutate(SWR_KEY_APPLICATIONS),
+        // Otherwise a refresh would leave the catalogue's capability filter
+        // sitting on a stale hierarchy.
+        mutate(SWR_KEY_BUSINESS_CAPABILITIES),
+      ]);
     } finally {
       setSpinning(false);
     }

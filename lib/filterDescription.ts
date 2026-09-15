@@ -6,7 +6,13 @@ import {
   STATUS_LABELS,
 } from "@/lib/labels";
 
-export function serializeFilters(filters: FilterValue): string {
+/** `capabilityNames` is passed in rather than derived here: only the caller
+ * holds the capability tree, and the export header must show names, never raw
+ * technical ids. */
+export function serializeFilters(
+  filters: FilterValue,
+  capabilityNames: string[] = [],
+): string {
   const lines: string[] = [];
 
   if (filters.search.trim()) lines.push(`Search: "${filters.search.trim()}"`);
@@ -34,6 +40,10 @@ export function serializeFilters(filters: FilterValue): string {
     lines.push(
       `Business Criticality: ${filters.businessCriticalities.map((c) => BUSINESS_CRITICALITY_LABELS[c] ?? c).join(", ")}`,
     );
+  }
+
+  if (capabilityNames.length > 0) {
+    lines.push(`Business Capabilities: ${capabilityNames.join(", ")}`);
   }
 
   return lines.length === 0

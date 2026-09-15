@@ -44,6 +44,12 @@ export type Filters = {
   portfolios?: string[];
   operator?: string;
   businessCriticalities?: BusinessCriticality[];
+  /** Business Capability ids **already expanded to their descendants** by the
+   * caller (see `expandSelection`). Deliberately named apart from
+   * `FilterValue.businessCapabilityIds`, which holds only what the user
+   * actually checked: the two must never be confused, and the different name
+   * keeps `FilterValue` structurally assignable to `Filters`. */
+  businessCapabilityIdsExpanded?: Set<string>;
 };
 
 export function filterApplications(
@@ -65,6 +71,17 @@ export function filterApplications(
       if (m.portfolio == null) {
         if (!f.portfolios.includes(PORTFOLIO_NONE)) return false;
       } else if (!f.portfolios.includes(m.portfolio.name)) {
+        return false;
+      }
+    }
+    if (f.businessCapabilityIdsExpanded?.size) {
+      // Many-to-many, unlike every other axis: an application matches as soon
+      // as one of its capabilities falls inside a checked node's subtree.
+      if (
+        !m.businessCapabilities.some((bc) =>
+          f.businessCapabilityIdsExpanded!.has(bc.id),
+        )
+      ) {
         return false;
       }
     }

@@ -22,7 +22,6 @@ export type DiscoverContextMenuTarget = {
    * on the Interface variant (no such action there). */
   providersShown: number;
   providersTotal: number;
-  canHide: boolean;
 };
 
 type Props = {
@@ -173,11 +172,8 @@ export default function NodeContextMenu({
       <div className="my-1 border-t border-border" />
       <button
         type="button"
-        disabled={!target.canHide}
         onClick={() => onHide(target.nodeId)}
-        className={`w-full px-3 py-1.5 text-left text-sm text-danger ${
-          target.canHide ? "hover:bg-surface-2" : "opacity-60 cursor-default"
-        }`}
+        className="w-full px-3 py-1.5 text-left text-sm text-danger hover:bg-surface-2"
       >
         Hide
       </button>
