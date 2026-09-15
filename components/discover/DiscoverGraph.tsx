@@ -18,17 +18,20 @@ import {
   type Node,
   type Edge,
   type NodeChange,
+  type ReactFlowInstance,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import type { DiscoverApplicationNode, DiscoverEdge, DiscoverInterfaceNode } from "@/lib/types";
 import {
   fetchApplicationInterfaces,
+  fetchApplicationsInterfaces,
   fetchInterfaceDependencies,
   type ApplicationInterfacesNode,
   type InterfaceNode as InterfaceFactSheet,
 } from "@/lib/atom-api";
 import {
   toInboundInterfaces,
+  toInternalRelations,
   toOutboundInterfacesAndProviders,
   toInterfaceConsumers,
   toInterfaceProvider,
@@ -39,6 +42,7 @@ import {
   INTERFACE_NODE_SIZE,
   MIN_APP_NODE_WIDTH,
   interfaceSlotPosition,
+  layoutRootApplications,
   placeNewApplicationNode,
   projectPointToRectanglePerimeter,
 } from "@/lib/discover-graph-layout";
@@ -60,6 +64,13 @@ export type DiscoverGraphHandle = {
 type Props = {
   resolveManagerName: (applicationId: string) => string | null;
   resolveApplication: (applicationId: string) => Application | null;
+  /** Applications to lay out in one batch on mount, from the catalogue's
+   * "Show in Discover" link (`/discover?ids=…`). Passed as a prop rather
+   * than pushed through the imperative handle because the graph is
+   * `dynamic(ssr:false)`: on the render where the caller first has the
+   * applications, `graphRef.current` is still null, so a caller-side effect
+   * would silently seed nothing. */
+  seed?: DiscoverApplicationNode[];
 };
 
 function boxSizeOf(node: Node): { width: number; height: number } {
@@ -131,18 +142,25 @@ function mergeInterfaceFactSheet(
 /** Adapted from `/depgraph`'s `DependencyGraph.tsx`: plain `useState` (not
  * `useNodesState`), edges derived from `edgeMeta` + live node positions via
  * `useMemo` so dragging never touches `edgeMeta`, and every expand/hide
- * action mutates state locally — ELK never runs again after the initial
- * root layout (done by the caller before `addApplication` for the first
- * node, trivially a single point at the origin). */
+ * action mutates state locally — ELK runs at most once, for the initial
+ * root layout: either trivially (the first `addApplication` puts a single
+ * node at the origin) or through the batch `seed` effect below, which lays
+ * out a whole catalogue selection in one pass. Never again afterward. */
 const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGraph(
-  { resolveManagerName, resolveApplication },
+  { resolveManagerName, resolveApplication, seed },
   ref,
 ) {
   const [nodes, setNodes] = useState<Node[]>([]);
   const [edgeMeta, setEdgeMeta] = useState<DiscoverEdge[]>([]);
+  const [seedError, setSeedError] = useState<string | null>(null);
+  const [seeding, setSeeding] = useState(false);
   const [contextMenu, setContextMenu] = useState<DiscoverContextMenuTarget | null>(null);
   const [openApplicationId, setOpenApplicationId] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  /** Captured via `onInit` instead of `useReactFlow()` so the component
+   * doesn't have to be split around a `ReactFlowProvider` just to re-fit the
+   * view after the batch seed lands (the `fitView` prop is mount-only). */
+  const flowRef = useRef<ReactFlowInstance | null>(null);
 
   const closeApplicationInfo = useCallback(() => setOpenApplicationId(null), []);
   const toggleApplicationInfo = useCallback(
@@ -389,6 +407,111 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
     },
     [makeApplicationNode],
   );
+
+  /** One-shot batch seed from `/discover?ids=…`: fetch every selected
+   * application's interfaces, keep only the relations internal to the
+   * selection, run ELK once over the resulting application-level graph, and
+   * commit nodes + edges in a single pass. Deliberately not expressed as N
+   * `addApplication` calls — those place each new root to the right of the
+   * previous one, which degenerates into an unreadable horizontal row. */
+  /** Which selection has already been seeded, as a signature of its ids —
+   * not a plain boolean. A discarded run (StrictMode's
+   * mount→unmount→mount, where the first pass is cancelled mid-flight)
+   * releases it so the second mount really does seed; a re-render carrying
+   * the same ids (e.g. the catalogue refetching behind `RefreshButton`)
+   * still matches, and never wipes what the user has explored since. */
+  const seededRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!seed || seed.length === 0) return;
+    const ids = seed.map((app) => app.id);
+    const signature = ids.join(",");
+    if (seededRef.current === signature) return;
+    seededRef.current = signature;
+    let cancelled = false;
+    let committed = false;
+
+    const run = async () => {
+      const selectedIds = new Set(ids);
+      setSeeding(true);
+      try {
+        const fetched = await fetchApplicationsInterfaces(ids);
+        if (cancelled) return;
+
+        // Same cache priming as `ensureAppInterfaces`, so the context menus
+        // opened on a seeded node don't re-fetch what we already hold.
+        for (const node of fetched) {
+          appInterfacesCache.current.set(node.id, node);
+          for (const edge of node.relProviderApplicationToInterface?.edges ?? []) {
+            if (edge.node.factSheet) cacheInterfaceFactSheet(edge.node.factSheet);
+          }
+          for (const edge of node.relConsumerApplicationToInterface?.edges ?? []) {
+            if (edge.node.factSheet) cacheInterfaceFactSheet(edge.node.factSheet);
+          }
+        }
+
+        const { interfaces, edges } = toInternalRelations(fetched, selectedIds);
+        const byProvider = new Map<string, DiscoverInterfaceNode[]>();
+        const providerOf = new Map<string, string>();
+        for (const iface of interfaces) {
+          providerOf.set(iface.id, iface.providerId);
+          const list = byProvider.get(iface.providerId);
+          if (list) list.push(iface);
+          else byProvider.set(iface.providerId, [iface]);
+        }
+
+        // ELK lays out applications only: the circles are xyflow children of
+        // their provider, so they're placed afterward, in relative coords.
+        // Hence consumer → provider edges, not consumer → interface ones.
+        const positions = await layoutRootApplications(
+          ids,
+          edges.map((e) => ({
+            id: e.id,
+            source: e.consumerId,
+            target: providerOf.get(e.interfaceId) ?? e.consumerId,
+          })),
+        );
+        if (cancelled) return;
+
+        for (const id of ids) rootIdsRef.current.add(id);
+        setNodes(() => {
+          let next = seed.map((app) =>
+            makeApplicationNode(app, positions.get(app.id) ?? { x: 0, y: 0 }, true),
+          );
+          for (const [providerId, providerInterfaces] of byProvider) {
+            next = placeProviderInterfaces(next, providerId, providerInterfaces);
+          }
+          return next;
+        });
+        setEdgeMeta(edges);
+        committed = true;
+        // `fitView` as a prop only runs at mount, before the seed lands.
+        requestAnimationFrame(() => flowRef.current?.fitView({ maxZoom: 1 }));
+      } catch (e) {
+        if (cancelled) return;
+        setSeedError(e instanceof Error ? e.message : String(e));
+        // The rectangles still belong on screen — only their relations
+        // failed to load; fall back to the edgeless packing.
+        const packed = await layoutRootApplications(ids).catch(
+          () => new Map<string, { x: number; y: number }>(),
+        );
+        if (cancelled) return;
+        for (const id of ids) rootIdsRef.current.add(id);
+        setNodes(
+          seed.map((app) => makeApplicationNode(app, packed.get(app.id) ?? { x: 0, y: 0 }, true)),
+        );
+        committed = true;
+        requestAnimationFrame(() => flowRef.current?.fitView({ maxZoom: 1 }));
+      } finally {
+        if (!cancelled) setSeeding(false);
+      }
+    };
+
+    void run();
+    return () => {
+      cancelled = true;
+      if (!committed) seededRef.current = null;
+    };
+  }, [seed, makeApplicationNode, placeProviderInterfaces, cacheInterfaceFactSheet]);
 
   const removeApplication = useCallback((id: string) => {
     rootIdsRef.current.delete(id);
@@ -685,19 +808,33 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
     [],
   );
 
+  /** Same idea for "Show API": `shown` counts this app's own provided
+   * interfaces already displayed as circles, `total` counts all of them —
+   * no second hop to another FactSheet type, so (like
+   * `providerCountsForApplication`) `total` is never `-1` once `cached`
+   * exists. */
+  const apiCountsForApplication = useCallback(
+    (appId: string): { shown: number; total: number } | null => {
+      const cached = appInterfacesCache.current.get(appId);
+      if (!cached) return null;
+      const visibleIds = new Set(nodesRef.current.map((n) => n.id));
+      const interfaces = toInboundInterfaces(cached);
+      const shown = interfaces.filter((i) => visibleIds.has(i.id)).length;
+      return { shown, total: interfaces.length };
+    },
+    [],
+  );
+
   const onNodeContextMenu = useCallback(
     (event: React.MouseEvent, n: Node) => {
       event.preventDefault();
       const rect = containerRef.current?.getBoundingClientRect();
       const x = event.clientX - (rect?.left ?? 0);
       const y = event.clientY - (rect?.top ?? 0);
-      const visibleIds = new Set(nodesRef.current.map((nn) => nn.id));
 
       if (n.type === "application") {
         const cached = appInterfacesCache.current.get(n.id);
-        const inboundCount = cached
-          ? toInboundInterfaces(cached).filter((i) => !visibleIds.has(i.id)).length
-          : -1;
+        const apiCounts = apiCountsForApplication(n.id);
         const consumerCounts = consumerCountsForApplication(n.id);
         const providerCounts = providerCountsForApplication(n.id);
         setContextMenu({
@@ -705,7 +842,8 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
           x,
           y,
           variant: "application",
-          inboundCount,
+          apiShown: apiCounts?.shown ?? -1,
+          apiTotal: apiCounts?.total ?? -1,
           consumersShown: consumerCounts?.shown ?? -1,
           consumersTotal: consumerCounts?.total ?? -1,
           providersShown: providerCounts?.shown ?? -1,
@@ -715,19 +853,18 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
         if (!cached) {
           // Not fetched yet — go get it, then refresh the menu in place if
           // it's still open on this same node.
-          void ensureAppInterfaces(n.id).then((data) => {
+          void ensureAppInterfaces(n.id).then(() => {
             setContextMenu((current) => {
               if (!current || current.nodeId !== n.id || current.variant !== "application") {
                 return current;
               }
-              const stillVisibleIds = new Set(nodesRef.current.map((nn) => nn.id));
+              const refreshedApiCounts = apiCountsForApplication(n.id);
               const refreshedConsumerCounts = consumerCountsForApplication(n.id);
               const refreshedProviderCounts = providerCountsForApplication(n.id);
               return {
                 ...current,
-                inboundCount: data
-                  ? toInboundInterfaces(data).filter((i) => !stillVisibleIds.has(i.id)).length
-                  : current.inboundCount,
+                apiShown: refreshedApiCounts?.shown ?? current.apiShown,
+                apiTotal: refreshedApiCounts?.total ?? current.apiTotal,
                 consumersShown: refreshedConsumerCounts?.shown ?? current.consumersShown,
                 consumersTotal: refreshedConsumerCounts?.total ?? current.consumersTotal,
                 providersShown: refreshedProviderCounts?.shown ?? current.providersShown,
@@ -743,7 +880,8 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
           x,
           y,
           variant: "interface",
-          inboundCount: 0,
+          apiShown: 0,
+          apiTotal: 0,
           consumersShown: consumerCounts?.shown ?? -1,
           consumersTotal: consumerCounts?.total ?? -1,
           providersShown: 0,
@@ -769,6 +907,7 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
       }
     },
     [
+      apiCountsForApplication,
       consumerCountsForApplication,
       consumerCountsForInterface,
       providerCountsForApplication,
@@ -885,6 +1024,9 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
           deleteKeyCode={null}
           fitView
           fitViewOptions={{ maxZoom: 1 }}
+          onInit={(instance) => {
+            flowRef.current = instance;
+          }}
           onNodesChange={onNodesChange}
           onNodeClick={handleNodeClick}
           onPaneClick={handlePaneClick}
@@ -893,6 +1035,23 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
           <Background />
           <Controls showInteractive={false} />
         </ReactFlow>
+        {seeding && (
+          <div className="pointer-events-none absolute left-1/2 top-3 z-10 -translate-x-1/2 rounded-full border border-border bg-surface px-3 py-1.5 text-xs font-mono text-muted shadow-lg">
+            Loading relations…
+          </div>
+        )}
+        {seedError && (
+          <div className="absolute left-1/2 top-3 z-10 flex max-w-[90%] -translate-x-1/2 items-center gap-3 rounded border border-danger/40 bg-surface px-3 py-2 text-xs text-danger shadow-lg">
+            <span className="truncate">Could not load the relations: {seedError}</span>
+            <button
+              type="button"
+              onClick={() => setSeedError(null)}
+              className="shrink-0 text-muted hover:text-fg"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
         <NodeContextMenu
           target={contextMenu}
           onClose={() => setContextMenu(null)}

@@ -186,6 +186,14 @@ export function buildApplicationInterfacesQuery(id: string): string {
   return APPLICATION_INTERFACES_QUERY.replace("__ID__", id);
 }
 
+/** Same query for several applications in one round-trip — `filter: { ids }`
+ * is already a list, so seeding the graph from the catalogue costs a handful
+ * of requests instead of one per application. */
+export function buildApplicationsInterfacesQuery(ids: string[]): string {
+  const list = ids.map((id) => JSON.stringify(id)).join(", ");
+  return APPLICATION_INTERFACES_QUERY.replace('["__ID__"]', `[${list}]`);
+}
+
 export function buildInterfaceDependenciesQuery(id: string): string {
   return INTERFACE_DEPENDENCIES_QUERY.replace("__ID__", id);
 }

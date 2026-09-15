@@ -1,6 +1,7 @@
 import { buildApplicationsQuery } from "./leanix-application-query";
 import {
   buildApplicationInterfacesQuery,
+  buildApplicationsInterfacesQuery,
   buildInterfaceDependenciesQuery,
 } from "./leanix-interface-query";
 
@@ -444,6 +445,31 @@ export async function fetchApplicationInterfaces(
     allFactSheets: { edges: { node: ApplicationInterfacesNode }[] };
   }>(buildApplicationInterfacesQuery(id));
   return allFactSheets.edges[0]?.node ?? null;
+}
+
+/** Batched form of `fetchApplicationInterfaces`, for the catalogue-seeded
+ * graph. Chunked so a 100-application seed stays a handful of parallel
+ * POSTs (and keeps each query text reasonable) instead of 100 serial ones,
+ * each carrying `atomFetch`'s 15 s timeout. Applications LeanIX doesn't
+ * return are simply absent from the result. */
+const APPLICATION_INTERFACES_CHUNK_SIZE = 25;
+
+export async function fetchApplicationsInterfaces(
+  ids: string[],
+): Promise<ApplicationInterfacesNode[]> {
+  if (ids.length === 0) return [];
+  const chunks: string[][] = [];
+  for (let i = 0; i < ids.length; i += APPLICATION_INTERFACES_CHUNK_SIZE) {
+    chunks.push(ids.slice(i, i + APPLICATION_INTERFACES_CHUNK_SIZE));
+  }
+  const pages = await Promise.all(
+    chunks.map((chunk) =>
+      postGraphQL<{ allFactSheets: { edges: { node: ApplicationInterfacesNode }[] } }>(
+        buildApplicationsInterfacesQuery(chunk),
+      ),
+    ),
+  );
+  return pages.flatMap(({ allFactSheets }) => allFactSheets.edges.map((e) => e.node));
 }
 
 export async function fetchInterfaceDependencies(

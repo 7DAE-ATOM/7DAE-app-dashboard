@@ -12,21 +12,40 @@ export const INTERFACE_NODE_SIZE = 20;
  * circles attached — keeps the labels usable. */
 export const MIN_APP_NODE_WIDTH = 120;
 
-/** Root Application rectangles have no known relations between them until
- * expanded — there is nothing for a hub-and-spoke "radial" layout to be
- * radial about yet, so the one-time initial layout just packs them without
- * overlap (`elk.algorithm: "box"`). Everything added afterward (interfaces,
- * revealed providers/consumers) is positioned locally, never through ELK. */
+/** The one-time initial layout of a set of root Application rectangles.
+ *
+ * Without `edges` (roots added one by one, no known relation between them)
+ * there is nothing for a hub-and-spoke "radial" layout to be radial about,
+ * so it just packs them without overlap (`elk.algorithm: "box"`). With
+ * `edges` — the catalogue-seeded graph, where the relations internal to the
+ * selection are known upfront — a layered left-to-right flow reads the
+ * consumer → provider direction far better than a blind packing.
+ *
+ * Edges are expressed **between applications** (consumer → provider): the
+ * interface circles are xyflow children of their provider, positioned
+ * afterward by `interfaceSlotPosition`, so they never take part in ELK.
+ *
+ * Everything added after this one pass (interfaces, revealed
+ * providers/consumers) is positioned locally, never through ELK. */
 export async function layoutRootApplications(
   ids: string[],
+  edges: { id: string; source: string; target: string }[] = [],
 ): Promise<Map<string, { x: number; y: number }>> {
   const graph: ElkNode = {
     id: "root",
     children: ids.map((id) => ({ id, width: APP_NODE_WIDTH, height: APP_NODE_HEIGHT })),
-    edges: [],
+    edges: edges.map((e) => ({ id: e.id, sources: [e.source], targets: [e.target] })),
   };
   const result = await elk.layout(graph, {
-    layoutOptions: { "elk.algorithm": "box", "elk.spacing.nodeNode": "60" },
+    layoutOptions:
+      edges.length > 0
+        ? {
+            "elk.algorithm": "layered",
+            "elk.direction": "RIGHT",
+            "elk.spacing.nodeNode": "60",
+            "elk.layered.spacing.nodeNodeBetweenLayers": "120",
+          }
+        : { "elk.algorithm": "box", "elk.spacing.nodeNode": "60" },
   });
   const positions = new Map<string, { x: number; y: number }>();
   for (const child of result.children ?? []) {

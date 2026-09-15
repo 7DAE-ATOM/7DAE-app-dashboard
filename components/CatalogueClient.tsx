@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import ApplicationCard from "@/components/ApplicationCard";
 import FilterBar, { type FilterValue } from "@/components/FilterBar";
 import FilterSheet from "@/components/FilterSheet";
@@ -14,8 +15,18 @@ import {
   setCataloguePage,
 } from "@/lib/catalogueFilters";
 import { serializeFilters } from "@/lib/filterDescription";
+import {
+  SEED_CONFIRM_THRESHOLD,
+  SEED_MAX,
+  buildDiscoverSeedHref,
+} from "@/lib/discoverSeed";
 
 const PAGE_SIZE = 6;
+
+/** Shared by the two side-panel actions (export, open in Discover) so they
+ * stay visually identical — one is a <button>, the other a <Link>. */
+const ACTION_BUTTON_CLASS =
+  "mt-3 block w-full text-center text-xs font-mono px-3 py-2 rounded border border-border bg-surface hover:bg-accent/10 hover:text-accent disabled:opacity-50 disabled:cursor-not-allowed transition-colors";
 
 function CatalogueSkeleton() {
   return (
@@ -110,6 +121,26 @@ function CatalogueLoaded({
 
   const [isExporting, setIsExporting] = useState(false);
 
+  // The whole filtered set, not the current page — same rule as the PDF export.
+  const discoverIds = useMemo(() => visible.map((a) => a.id), [visible]);
+
+  const handleShowInDiscover = (e: React.MouseEvent<HTMLAnchorElement>) => {
+    if (discoverIds.length > SEED_MAX) {
+      e.preventDefault();
+      alert(
+        `Too many applications to open in Discover (${discoverIds.length}). ` +
+          `Narrow the filters down to ${SEED_MAX} or fewer.`,
+      );
+      return;
+    }
+    if (
+      discoverIds.length > SEED_CONFIRM_THRESHOLD &&
+      !window.confirm(`Open ${discoverIds.length} applications in Discover?`)
+    ) {
+      e.preventDefault();
+    }
+  };
+
   const handleExportPdf = async () => {
     if (visible.length === 0 || isExporting) return;
     if (
@@ -165,10 +196,31 @@ function CatalogueLoaded({
               type="button"
               onClick={handleExportPdf}
               disabled={visible.length === 0 || isExporting}
-              className="mt-3 w-full text-xs font-mono px-3 py-2 rounded border border-border bg-surface hover:bg-accent/10 hover:text-accent disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className={ACTION_BUTTON_CLASS}
             >
               {isExporting ? "Generating PDF…" : `Export PDF (${visible.length})`}
             </button>
+            {/* An <a> has no `disabled`, so the empty case renders a real
+             * disabled button instead of a dead link. */}
+            {visible.length === 0 ? (
+              <button type="button" disabled className={ACTION_BUTTON_CLASS}>
+                Show in Discover (0)
+              </button>
+            ) : (
+              <Link
+                href={buildDiscoverSeedHref(discoverIds)}
+                target="_blank"
+                rel="noopener noreferrer"
+                // The href carries every filtered id — nothing worth prefetching.
+                prefetch={false}
+                title="Opens in a new tab"
+                onClick={handleShowInDiscover}
+                className={ACTION_BUTTON_CLASS}
+              >
+                Show in Discover ({visible.length}){" "}
+                <span aria-hidden="true">↗</span>
+              </Link>
+            )}
           </div>
         </aside>
 

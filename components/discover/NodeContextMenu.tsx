@@ -7,7 +7,10 @@ export type DiscoverContextMenuTarget = {
   x: number;
   y: number;
   variant: "application" | "interface";
-  inboundCount: number;
+  /** Interfaces provided by this Application already displayed as circles
+   * ("Show API"). Always `0` on the Interface variant (no such action there). */
+  apiShown: number;
+  apiTotal: number;
   /** Distinct consumer apps already displayed on the graph (edge drawn). */
   consumersShown: number;
   /** Distinct consumer apps that could be displayed in total, across every
@@ -130,8 +133,11 @@ export default function NodeContextMenu({
         <>
           <MenuItem
             label="Show API"
-            count={target.inboundCount}
-            countTooltip="Interfaces provided by this application not yet shown on the graph"
+            count={target.apiShown}
+            countTooltip="Interfaces provided by this application currently displayed on the graph"
+            secondaryCount={target.apiTotal}
+            secondaryCountTooltip="Total interfaces provided by this application that can be displayed"
+            disabled={target.apiTotal !== -1 && target.apiShown >= target.apiTotal}
             onClick={() => onShowInterfacesInbound(target.nodeId)}
           />
           <MenuItem
