@@ -76,6 +76,15 @@ export type DataObject = {
   name: string;
 };
 
+/** A Business Capability FactSheet linked to an application via
+ * `relApplicationToBusinessCapability`. `externalId` is nullable: the
+ * `... on BusinessCapability` fragment may not resolve one. */
+export type BusinessCapability = {
+  id: string;
+  name: string;
+  externalId: string | null;
+};
+
 export type Application = {
   id: string;
   externalId: string;
@@ -114,6 +123,7 @@ export type Application = {
   photos: Photo[];
   linkedResources: LinkedResourceRef[];
   dataObjects: DataObject[];
+  businessCapabilities: BusinessCapability[];
 };
 
 /** Direction of data flow between an application and one of its neighbours,

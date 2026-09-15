@@ -69,6 +69,7 @@ export type ApplicationNode = {
   } | null;
   relApplicationToPortfolio: { edges: RelatedFactSheetEdge[] } | null;
   relApplicationToDataObject: { edges: DataObjectEdge[] } | null;
+  relApplicationToBusinessCapability: { edges: DataObjectEdge[] } | null;
 };
 
 export type AtomErrorKind = "backend-down" | "unauthorized" | "http-error";
@@ -380,8 +381,11 @@ export type InterfaceRelatedApplicationEdge = {
   };
 };
 
-/** One edge of a `DataObject` relation — used both for `relInterfaceToDataObject`
- * (on an Interface) and `relApplicationToDataObject` (on an Application). */
+/** One edge of a multi-target FactSheet relation — used for
+ * `relInterfaceToDataObject` (on an Interface), `relApplicationToDataObject`
+ * and `relApplicationToBusinessCapability` (on an Application). Same shape in
+ * every case: the target FactSheet with `id`, `name` and an optional
+ * `externalId`. */
 export type DataObjectEdge = {
   node: {
     factSheet: {

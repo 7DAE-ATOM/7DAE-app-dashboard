@@ -607,48 +607,80 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
     return result;
   }, [nodes, edgeMeta]);
 
-  /** For an Application: distinct consumer apps whose edge to one of its
-   * provider interfaces isn't currently drawn — split into `visible` (only
-   * counting interfaces that are themselves currently shown as circles) and
-   * `total` (counting across every interface this app provides, shown or
-   * not). Requires `appInterfacesCache`/`interfaceFactSheetCache` to already
-   * hold this app's data (populated by `ensureAppInterfaces`); `null` means
-   * "not fetched yet" — the caller decides whether to trigger a fetch. */
+  /** For an Application: `shown` is the number of distinct consumer apps
+   * already displayed on the graph (an edge is drawn to them from one of
+   * this app's provider interfaces); `total` is the number of distinct
+   * consumer apps that could be displayed, across every interface this app
+   * provides — shown or not. Requires `appInterfacesCache`/
+   * `interfaceFactSheetCache` to already hold this app's data (populated by
+   * `ensureAppInterfaces`); `null` means "not fetched yet" — the caller
+   * decides whether to trigger a fetch. `total` itself can come back `-1`
+   * (unknown) if a provided interface's own factsheet isn't cached yet. */
   const consumerCountsForApplication = useCallback(
-    (appId: string): { visible: number; total: number } | null => {
+    (appId: string): { shown: number; total: number } | null => {
       const cached = appInterfacesCache.current.get(appId);
       if (!cached) return null;
-      const visibleIds = new Set(nodesRef.current.map((n) => n.id));
-      const missingVisible = new Set<string>();
-      const missingTotal = new Set<string>();
+      const shownConsumers = new Set<string>();
+      const totalConsumers = new Set<string>();
+      let totalKnown = true;
       for (const iface of toInboundInterfaces(cached)) {
         const fs = interfaceFactSheetCache.current.get(iface.id);
-        if (!fs) continue;
-        const ifaceVisible = visibleIds.has(iface.id);
+        if (!fs) {
+          totalKnown = false;
+          continue;
+        }
         for (const consumer of toInterfaceConsumers(fs).consumers) {
+          totalConsumers.add(consumer.id);
           const edgeVisible = edgeMetaRef.current.some(
             (e) => e.interfaceId === iface.id && e.consumerId === consumer.id,
           );
-          if (edgeVisible) continue;
-          missingTotal.add(consumer.id);
-          if (ifaceVisible) missingVisible.add(consumer.id);
+          if (edgeVisible) shownConsumers.add(consumer.id);
         }
       }
-      return { visible: missingVisible.size, total: missingTotal.size };
+      return { shown: shownConsumers.size, total: totalKnown ? totalConsumers.size : -1 };
     },
     [],
   );
 
   /** Same idea for a single Interface circle — there is only ever one
-   * interface involved, so "visible" and "total" always coincide. */
+   * interface involved, so `total` is simply its full consumer list. */
   const consumerCountsForInterface = useCallback(
-    (ifaceId: string): { visible: number; total: number } | null => {
+    (ifaceId: string): { shown: number; total: number } | null => {
       const fs = interfaceFactSheetCache.current.get(ifaceId);
       if (!fs || !fs.relInterfaceToConsumerApplication) return null;
-      const missing = toInterfaceConsumers(fs).consumers.filter(
-        (c) => !edgeMetaRef.current.some((e) => e.interfaceId === ifaceId && e.consumerId === c.id),
+      const consumers = toInterfaceConsumers(fs).consumers;
+      const shown = consumers.filter((c) =>
+        edgeMetaRef.current.some((e) => e.interfaceId === ifaceId && e.consumerId === c.id),
       ).length;
-      return { visible: missing, total: missing };
+      return { shown, total: consumers.length };
+    },
+    [],
+  );
+
+  /** For an Application: `shown` is the number of distinct provider apps
+   * already displayed on the graph (an interface it consumes, together with
+   * that interface's provider, is always revealed as a pair by
+   * `handleShowInterfacesOutbound` — so a consumed interface being visible
+   * implies its provider is too); `total` is the number of distinct provider
+   * apps across every interface this app consumes — shown or not. Unlike
+   * `consumerCountsForApplication`, the provider of each consumed interface
+   * is already nested in the same cached `ApplicationInterfacesNode`
+   * (`toOutboundInterfacesAndProviders`), so there's no partial-data case —
+   * `total` is never `-1` once `cached` exists. */
+  const providerCountsForApplication = useCallback(
+    (appId: string): { shown: number; total: number } | null => {
+      const cached = appInterfacesCache.current.get(appId);
+      if (!cached) return null;
+      const visibleIds = new Set(nodesRef.current.map((n) => n.id));
+      const { interfaces, providers } = toOutboundInterfacesAndProviders(cached);
+      const shownProviders = new Set<string>();
+      const totalProviders = new Set<string>();
+      interfaces.forEach((iface, idx) => {
+        const providerId = providers[idx].id;
+        totalProviders.add(providerId);
+        if (visibleIds.has(iface.id)) shownProviders.add(providerId);
+      });
+      return { shown: shownProviders.size, total: totalProviders.size };
     },
     [],
   );
@@ -666,20 +698,18 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
         const inboundCount = cached
           ? toInboundInterfaces(cached).filter((i) => !visibleIds.has(i.id)).length
           : -1;
-        const outboundCount = cached
-          ? toOutboundInterfacesAndProviders(cached).interfaces.filter((i) => !visibleIds.has(i.id))
-              .length
-          : -1;
         const consumerCounts = consumerCountsForApplication(n.id);
+        const providerCounts = providerCountsForApplication(n.id);
         setContextMenu({
           nodeId: n.id,
           x,
           y,
           variant: "application",
           inboundCount,
-          outboundCount,
-          consumersMissingVisible: consumerCounts?.visible ?? -1,
-          consumersMissingTotal: consumerCounts?.total ?? -1,
+          consumersShown: consumerCounts?.shown ?? -1,
+          consumersTotal: consumerCounts?.total ?? -1,
+          providersShown: providerCounts?.shown ?? -1,
+          providersTotal: providerCounts?.total ?? -1,
           canHide: !rootIdsRef.current.has(n.id),
         });
         if (!cached) {
@@ -691,19 +721,17 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
                 return current;
               }
               const stillVisibleIds = new Set(nodesRef.current.map((nn) => nn.id));
-              const refreshedCounts = consumerCountsForApplication(n.id);
+              const refreshedConsumerCounts = consumerCountsForApplication(n.id);
+              const refreshedProviderCounts = providerCountsForApplication(n.id);
               return {
                 ...current,
                 inboundCount: data
                   ? toInboundInterfaces(data).filter((i) => !stillVisibleIds.has(i.id)).length
                   : current.inboundCount,
-                outboundCount: data
-                  ? toOutboundInterfacesAndProviders(data).interfaces.filter(
-                      (i) => !stillVisibleIds.has(i.id),
-                    ).length
-                  : current.outboundCount,
-                consumersMissingVisible: refreshedCounts?.visible ?? current.consumersMissingVisible,
-                consumersMissingTotal: refreshedCounts?.total ?? current.consumersMissingTotal,
+                consumersShown: refreshedConsumerCounts?.shown ?? current.consumersShown,
+                consumersTotal: refreshedConsumerCounts?.total ?? current.consumersTotal,
+                providersShown: refreshedProviderCounts?.shown ?? current.providersShown,
+                providersTotal: refreshedProviderCounts?.total ?? current.providersTotal,
               };
             });
           });
@@ -716,9 +744,10 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
           y,
           variant: "interface",
           inboundCount: 0,
-          outboundCount: 0,
-          consumersMissingVisible: consumerCounts?.visible ?? -1,
-          consumersMissingTotal: consumerCounts?.total ?? -1,
+          consumersShown: consumerCounts?.shown ?? -1,
+          consumersTotal: consumerCounts?.total ?? -1,
+          providersShown: 0,
+          providersTotal: 0,
           canHide: true,
         });
         if (!consumerCounts) {
@@ -731,15 +760,21 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
               const refreshedCounts = consumerCountsForInterface(n.id);
               return {
                 ...current,
-                consumersMissingVisible: refreshedCounts?.visible ?? current.consumersMissingVisible,
-                consumersMissingTotal: refreshedCounts?.total ?? current.consumersMissingTotal,
+                consumersShown: refreshedCounts?.shown ?? current.consumersShown,
+                consumersTotal: refreshedCounts?.total ?? current.consumersTotal,
               };
             });
           });
         }
       }
     },
-    [consumerCountsForApplication, consumerCountsForInterface, ensureAppInterfaces, cacheInterfaceFactSheet],
+    [
+      consumerCountsForApplication,
+      consumerCountsForInterface,
+      providerCountsForApplication,
+      ensureAppInterfaces,
+      cacheInterfaceFactSheet,
+    ],
   );
 
   /** Same DOM-class trace technique as `/depgraph`'s `DependencyGraph.tsx`

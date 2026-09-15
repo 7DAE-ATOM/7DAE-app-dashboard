@@ -5,7 +5,12 @@ import type {
   RelatedFactSheetEdge,
 } from "./atom-api";
 import { detectGoogleDocFromUrl, getGoogleDriveEmbedUrl } from "./google-embed";
-import type { Application, DataObject, Person } from "./types";
+import type {
+  Application,
+  BusinessCapability,
+  DataObject,
+  Person,
+} from "./types";
 
 /** Unwraps a `rel...` relation's first edge to its target FactSheet — the
  * model only keeps a single portfolio/manager/architect, so later entries
@@ -34,6 +39,22 @@ function mapDataObjects(rel: { edges: DataObjectEdge[] } | null): DataObject[] {
     .map((e) => e.node.factSheet)
     .filter((fs): fs is NonNullable<typeof fs> => fs !== null)
     .map((fs) => ({ id: fs.id, name: fs.name?.trim() || "—" }));
+}
+
+/** Same edge shape and same tolerance as `mapDataObjects` — an application
+ * can support several Business Capabilities, and one without a resolved
+ * `externalId` still shows its name. */
+function mapBusinessCapabilities(
+  rel: { edges: DataObjectEdge[] } | null,
+): BusinessCapability[] {
+  return (rel?.edges ?? [])
+    .map((e) => e.node.factSheet)
+    .filter((fs): fs is NonNullable<typeof fs> => fs !== null)
+    .map((fs) => ({
+      id: fs.id,
+      name: fs.name?.trim() || "—",
+      externalId: fs.externalId?.externalId ?? null,
+    }));
 }
 
 const DEFAULT_DOC_NAMES: Record<"slides" | "docs" | "sheets", string> = {
@@ -189,5 +210,8 @@ export function toApplication(node: ApplicationNode): Application {
     ...toPhotos(node),
     linkedResources: toLinkedResources(node),
     dataObjects: mapDataObjects(node.relApplicationToDataObject),
+    businessCapabilities: mapBusinessCapabilities(
+      node.relApplicationToBusinessCapability,
+    ),
   };
 }

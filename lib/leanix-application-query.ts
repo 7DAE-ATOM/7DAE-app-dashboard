@@ -126,6 +126,21 @@ query {
               }
             }
           }
+          relApplicationToBusinessCapability {
+            edges {
+              node {
+                factSheet {
+                  id
+                  name
+                  ... on BusinessCapability {
+                    externalId {
+                      externalId
+                    }
+                  }
+                }
+              }
+            }
+          }
         }
       }
     }

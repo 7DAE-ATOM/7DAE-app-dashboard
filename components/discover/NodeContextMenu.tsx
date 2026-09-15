@@ -8,14 +8,17 @@ export type DiscoverContextMenuTarget = {
   y: number;
   variant: "application" | "interface";
   inboundCount: number;
-  outboundCount: number;
-  /** Distinct consumer apps whose edge to a currently-*visible* interface
-   * isn't drawn yet — governs what a click on "Show Consumers" actually
-   * reveals, so it also governs whether the item is disabled. */
-  consumersMissingVisible: number;
-  /** Same, but across every interface this node is attached to (visible or
-   * not) — shown alongside the first as context, not actionable by itself. */
-  consumersMissingTotal: number;
+  /** Distinct consumer apps already displayed on the graph (edge drawn). */
+  consumersShown: number;
+  /** Distinct consumer apps that could be displayed in total, across every
+   * interface this node is attached to (shown or not) — "Show Consumers" is
+   * disabled once `consumersShown` reaches this number. */
+  consumersTotal: number;
+  /** Same pair as `consumersShown`/`consumersTotal`, but for provider apps of
+   * the interfaces this Application consumes ("Show providers"). Always `0`
+   * on the Interface variant (no such action there). */
+  providersShown: number;
+  providersTotal: number;
   canHide: boolean;
 };
 
@@ -35,13 +38,26 @@ function formatCount(n: number): string {
 function MenuItem({
   label,
   count,
+  countTooltip,
   secondaryCount,
+  secondaryCountTooltip,
+  disabled: disabledOverride,
   onClick,
-}: Readonly<{ label: string; count: number; secondaryCount?: number; onClick: () => void }>) {
+}: Readonly<{
+  label: string;
+  count: number;
+  countTooltip: string;
+  secondaryCount?: number;
+  secondaryCountTooltip?: string;
+  /** Overrides the default `count === 0` disabling rule — needed for "Show
+   * Consumers", where `count` (shown) being 0 doesn't mean there's nothing
+   * left to reveal. */
+  disabled?: boolean;
+  onClick: () => void;
+}>) {
   // `count === -1` means "not fetched yet" — stays enabled (clicking is what
-  // triggers the fetch) and shows "…" instead of a number. Only `count` (not
-  // `secondaryCount`) governs whether the action does anything.
-  const disabled = count === 0;
+  // triggers the fetch) and shows "…" instead of a number.
+  const disabled = disabledOverride ?? count === 0;
   return (
     <button
       type="button"
@@ -53,9 +69,15 @@ function MenuItem({
     >
       <span className="text-fg">{label}</span>
       <span className="text-xs text-muted">
-        {secondaryCount === undefined
-          ? formatCount(count)
-          : `${formatCount(count)} / ${formatCount(secondaryCount)}`}
+        {secondaryCount === undefined ? (
+          <span title={countTooltip}>{formatCount(count)}</span>
+        ) : (
+          <>
+            <span title={countTooltip}>{formatCount(count)}</span>
+            {" / "}
+            <span title={secondaryCountTooltip}>{formatCount(secondaryCount)}</span>
+          </>
+        )}
       </span>
     </button>
   );
@@ -109,25 +131,36 @@ export default function NodeContextMenu({
           <MenuItem
             label="Show API"
             count={target.inboundCount}
+            countTooltip="Interfaces provided by this application not yet shown on the graph"
             onClick={() => onShowInterfacesInbound(target.nodeId)}
           />
           <MenuItem
             label="Show Consumers"
-            count={target.consumersMissingVisible}
-            secondaryCount={target.consumersMissingTotal}
+            count={target.consumersShown}
+            countTooltip="Consumer applications currently displayed on the graph"
+            secondaryCount={target.consumersTotal}
+            secondaryCountTooltip="Total consumer applications that can be displayed"
+            disabled={target.consumersTotal !== -1 && target.consumersShown >= target.consumersTotal}
             onClick={() => onShowDependencies(target.nodeId)}
           />
           <MenuItem
             label="Show providers"
-            count={target.outboundCount}
+            count={target.providersShown}
+            countTooltip="Provider applications currently displayed on the graph"
+            secondaryCount={target.providersTotal}
+            secondaryCountTooltip="Total provider applications that can be displayed"
+            disabled={target.providersTotal !== -1 && target.providersShown >= target.providersTotal}
             onClick={() => onShowInterfacesOutbound(target.nodeId)}
           />
         </>
       ) : (
         <MenuItem
           label="Show Consumers"
-          count={target.consumersMissingVisible}
-          secondaryCount={target.consumersMissingTotal}
+          count={target.consumersShown}
+          countTooltip="Consumer applications currently displayed on the graph"
+          secondaryCount={target.consumersTotal}
+          secondaryCountTooltip="Total consumer applications that can be displayed"
+          disabled={target.consumersTotal !== -1 && target.consumersShown >= target.consumersTotal}
           onClick={() => onShowDependencies(target.nodeId)}
         />
       )}
