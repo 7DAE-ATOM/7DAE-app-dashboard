@@ -53,6 +53,7 @@ import NodeContextMenu, { type DiscoverContextMenuTarget } from "./NodeContextMe
 import { ApplicationInfoContext } from "./ApplicationInfoContext";
 import type { Application } from "@/lib/types";
 import type { DiscoverGraphSnapshot } from "@/lib/discoverMermaid";
+import { useDiscoverViewMode } from "@/lib/discoverViewMode";
 
 const nodeTypes = { application: ApplicationNodeComponent, interface: InterfaceNodeComponent };
 const edgeTypes = { graphEdge: GraphEdge };
@@ -109,6 +110,33 @@ function centerOf(node: Node, byId: Map<string, Node>): { x: number; y: number }
   return { x: abs.x + size.width / 2, y: abs.y + size.height / 2 };
 }
 
+/**
+ * Folds `consumer → interface` links into `consumer → provider application`
+ * ones, deduplicated: several interfaces of the same provider consumed by the
+ * same application yield a single arrow. The count of folded interfaces is
+ * the one thing the simplified view drops, deliberately.
+ *
+ * Self-consumption (an application consuming an interface it provides itself)
+ * is skipped: the two endpoints share a centre, which makes `trimToBorder`
+ * degenerate, and a loop onto oneself says nothing here.
+ */
+function collapseToApplications(
+  edgeMeta: DiscoverEdge[],
+  providerOf: (interfaceId: string) => string | undefined,
+): { sourceId: string; targetId: string }[] {
+  const seen = new Set<string>();
+  const result: { sourceId: string; targetId: string }[] = [];
+  for (const e of edgeMeta) {
+    const targetId = providerOf(e.interfaceId);
+    if (!targetId || targetId === e.consumerId) continue;
+    const key = `${e.consumerId}|${targetId}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push({ sourceId: e.consumerId, targetId });
+  }
+  return result;
+}
+
 function boxesOf(nodes: Node[]) {
   const byId = new Map(nodes.map((n) => [n.id, n]));
   return nodes.map((n) => ({ ...absolutePosition(n, byId), ...boxSizeOf(n) }));
@@ -159,6 +187,10 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
   { resolveManagerName, resolveApplication, seed, onApplicationHidden },
   ref,
 ) {
+  // Drawing mode only: `nodes`/`edgeMeta` below are identical in both, so
+  // switching loses nothing and costs no fetch.
+  const viewMode = useDiscoverViewMode();
+  const simplified = viewMode === "simple";
   const [nodes, setNodes] = useState<Node[]>([]);
   const [edgeMeta, setEdgeMeta] = useState<DiscoverEdge[]>([]);
   const [seedError, setSeedError] = useState<string | null>(null);
@@ -714,6 +746,8 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
   const snapshot = useCallback((): DiscoverGraphSnapshot => {
     const current = nodesRef.current;
     const present = new Set(current.map((n) => n.id));
+    const byId = new Map(current.map((n) => [n.id, n]));
+    const providerOf = (interfaceId: string) => byId.get(interfaceId)?.parentId;
     return {
       applications: current
         .filter((n) => n.type === "application")
@@ -729,24 +763,33 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
             isRoot: rootIdsRef.current.has(n.id),
           };
         }),
-      interfaces: current
-        .filter((n) => n.type === "interface")
-        .map((n) => {
-          const data = n.data as unknown as InterfaceNodeData;
-          return {
-            id: n.id,
-            name: data.name,
-            protocol: data.protocol,
-            providerId: interfaceProviderRef.current.get(n.id) ?? n.parentId ?? "",
-          };
-        }),
-      // `edgeMeta` is the model; the `edges` memo below is geometry. Both
-      // ends re-checked so a pruning race can't leave a dangling link.
-      edges: edgeMetaRef.current.filter(
-        (e) => present.has(e.consumerId) && present.has(e.interfaceId),
-      ),
+      // Nothing to describe in the simplified view — the circles aren't there.
+      interfaces: simplified
+        ? []
+        : current
+            .filter((n) => n.type === "interface")
+            .map((n) => {
+              const data = n.data as unknown as InterfaceNodeData;
+              return {
+                id: n.id,
+                name: data.name,
+                protocol: data.protocol,
+                providerId: interfaceProviderRef.current.get(n.id) ?? n.parentId ?? "",
+              };
+            }),
+      // `edgeMeta` is the model; the `edges` memo below is geometry. Folded
+      // through the same helper the canvas uses, so the export and the screen
+      // can't disagree. Both ends re-checked so a pruning race can't leave a
+      // dangling link.
+      edges: simplified
+        ? collapseToApplications(edgeMetaRef.current, providerOf).filter(
+            (e) => present.has(e.sourceId) && present.has(e.targetId),
+          )
+        : edgeMetaRef.current
+            .filter((e) => present.has(e.consumerId) && present.has(e.interfaceId))
+            .map((e) => ({ sourceId: e.consumerId, targetId: e.interfaceId })),
     };
-  }, []);
+  }, [simplified]);
 
   useImperativeHandle(ref, () => ({ addApplication, removeApplication, snapshot }), [
     addApplication,
@@ -754,8 +797,56 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
     snapshot,
   ]);
 
+  /** What xyflow renders. `nodes` stays the full set: geometry and edges are
+   * derived from it, and folding links needs the interfaces the simplified
+   * view doesn't draw. Dropping child nodes while keeping their parent is
+   * safe; the reverse wouldn't be. */
+  const visibleNodes = useMemo(
+    () => (simplified ? nodes.filter((n) => n.type !== "interface") : nodes),
+    [nodes, simplified],
+  );
+
   const edges = useMemo<Edge[]>(() => {
     const byId = new Map(nodes.map((n) => [n.id, n]));
+
+    if (simplified) {
+      // Grouped by *unordered* pair so that A → B and B → A bend apart
+      // instead of landing on the exact same line.
+      const drawnPerPair = new Map<string, number>();
+      const result: Edge[] = [];
+      for (const { sourceId, targetId } of collapseToApplications(
+        edgeMeta,
+        (interfaceId) => byId.get(interfaceId)?.parentId,
+      )) {
+        const source = byId.get(sourceId);
+        const target = byId.get(targetId);
+        if (!source || !target) continue;
+        const pair = [sourceId, targetId].sort().join("|");
+        const rank = drawnPerPair.get(pair) ?? 0;
+        drawnPerPair.set(pair, rank + 1);
+        const sourceCenter = centerOf(source, byId);
+        const targetCenter = centerOf(target, byId);
+        const from = trimToBorder(sourceCenter, targetCenter, boxSizeOf(source));
+        const to = trimToBorder(targetCenter, sourceCenter, boxSizeOf(target));
+        result.push({
+          id: `${sourceId}->${targetId}`,
+          source: sourceId,
+          target: targetId,
+          type: "graphEdge",
+          data: {
+            sx: from.x,
+            sy: from.y,
+            tx: to.x,
+            ty: to.y,
+            bend: rank % 2 === 0 ? 1 : -1,
+          } satisfies GraphEdgeData,
+          markerEnd: { type: MarkerType.ArrowClosed, color: "var(--color-accent)" },
+          style: { stroke: "var(--color-accent)" },
+        });
+      }
+      return result;
+    }
+
     const byInterface = new Map<string, DiscoverEdge[]>();
     for (const e of edgeMeta) {
       if (!byInterface.has(e.interfaceId)) byInterface.set(e.interfaceId, []);
@@ -789,7 +880,7 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
       });
     }
     return result;
-  }, [nodes, edgeMeta]);
+  }, [nodes, edgeMeta, simplified]);
 
   /** For an Application: `shown` is the number of distinct consumer apps
    * already displayed on the graph (an edge is drawn to them from one of
@@ -1073,7 +1164,7 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
     <ApplicationInfoContext.Provider value={applicationInfoValue}>
       <div ref={containerRef} className="relative h-full w-full">
         <ReactFlow
-          nodes={nodes}
+          nodes={visibleNodes}
           edges={edges}
           nodeTypes={nodeTypes}
           edgeTypes={edgeTypes}
@@ -1122,6 +1213,7 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
           onShowInterfacesOutbound={handleShowInterfacesOutbound}
           onShowDependencies={handleShowDependencies}
           onHide={handleHide}
+          simplified={simplified}
         />
       </div>
     </ApplicationInfoContext.Provider>

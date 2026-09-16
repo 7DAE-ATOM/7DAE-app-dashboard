@@ -31,6 +31,11 @@ type Props = {
   onShowInterfacesOutbound: (nodeId: string) => void;
   onShowDependencies: (nodeId: string) => void;
   onHide: (nodeId: string) => void;
+  /** Simplified view: interface circles aren't drawn, so "Show API" — whose
+   * only effect is to reveal them — is left out rather than offered as an
+   * action with nothing to show. The other two speak of applications and
+   * keep working unchanged. */
+  simplified?: boolean;
 };
 
 function formatCount(n: number): string {
@@ -95,6 +100,7 @@ export default function NodeContextMenu({
   onShowInterfacesOutbound,
   onShowDependencies,
   onHide,
+  simplified = false,
 }: Readonly<Props>) {
   const ref = useRef<HTMLDivElement>(null);
 
@@ -130,15 +136,17 @@ export default function NodeContextMenu({
     >
       {target.variant === "application" ? (
         <>
-          <MenuItem
-            label="Show API"
-            count={target.apiShown}
-            countTooltip="Interfaces provided by this application currently displayed on the graph"
-            secondaryCount={target.apiTotal}
-            secondaryCountTooltip="Total interfaces provided by this application that can be displayed"
-            disabled={target.apiTotal !== -1 && target.apiShown >= target.apiTotal}
-            onClick={() => onShowInterfacesInbound(target.nodeId)}
-          />
+          {!simplified && (
+            <MenuItem
+              label="Show API"
+              count={target.apiShown}
+              countTooltip="Interfaces provided by this application currently displayed on the graph"
+              secondaryCount={target.apiTotal}
+              secondaryCountTooltip="Total interfaces provided by this application that can be displayed"
+              disabled={target.apiTotal !== -1 && target.apiShown >= target.apiTotal}
+              onClick={() => onShowInterfacesInbound(target.nodeId)}
+            />
+          )}
           <MenuItem
             label="Show Consumers"
             count={target.consumersShown}

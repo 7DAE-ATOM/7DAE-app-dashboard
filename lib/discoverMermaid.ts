@@ -10,8 +10,6 @@
  * survives it, a style rule may not.
  */
 
-import type { DiscoverEdge } from "@/lib/types";
-
 export type DiscoverGraphSnapshot = {
   applications: {
     id: string;
@@ -21,6 +19,7 @@ export type DiscoverGraphSnapshot = {
      * by exploration. Rendered with a distinct shape. */
     isRoot: boolean;
   }[];
+  /** Empty in the simplified view, where interfaces aren't drawn. */
   interfaces: {
     id: string;
     name: string | null;
@@ -28,8 +27,11 @@ export type DiscoverGraphSnapshot = {
     /** Technical id of the Application providing it. */
     providerId: string;
   }[];
-  /** Always consumer Application → consumed Interface. */
-  edges: DiscoverEdge[];
+  /** Consumer application → what it points at: an interface in the full
+   * view, the provider application in the simplified one. Which it is comes
+   * from `interfaces` being populated or not, so the exporter itself never
+   * has to know the mode. */
+  edges: { sourceId: string; targetId: string }[];
 };
 
 /**
@@ -85,8 +87,8 @@ export function toMermaid(snapshot: DiscoverGraphSnapshot): string {
   }
 
   for (const edge of snapshot.edges) {
-    const source = alias.get(edge.consumerId);
-    const target = alias.get(edge.interfaceId);
+    const source = alias.get(edge.sourceId);
+    const target = alias.get(edge.targetId);
     if (source && target) lines.push(`  ${source} --> ${target}`);
   }
 

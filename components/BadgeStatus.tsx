@@ -8,7 +8,9 @@ const colors: Record<ApplicationStatus, string> = {
   developmentPhase: "bg-accent/15 text-accent",
   planPhase: "bg-warning/15 text-warning",
   inactive: "bg-danger/15 text-danger",
-  NA: "bg-surface-2 text-muted",
+  // No background: `bg-surface-2` read as a white block on the light theme,
+  // and an undefined status doesn't deserve more weight than the real ones.
+  NA: "text-muted",
 };
 
 export default function BadgeStatus({

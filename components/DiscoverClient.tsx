@@ -10,6 +10,7 @@ import ApplicationSearch from "@/components/discover/ApplicationSearch";
 import SelectedApplicationsBar from "@/components/discover/SelectedApplicationsBar";
 import DiscoverDisplaySettings from "@/components/discover/DiscoverDisplaySettings";
 import DiscoverExportMenu from "@/components/discover/DiscoverExportMenu";
+import DiscoverViewModeToggle from "@/components/discover/DiscoverViewModeToggle";
 import type { DiscoverGraphHandle } from "@/components/discover/DiscoverGraph";
 import { toMermaid } from "@/lib/discoverMermaid";
 import { downloadBlob, exportDateStamp } from "@/lib/downloadBlob";
@@ -129,6 +130,7 @@ export default function DiscoverClient() {
         <ApplicationSearch applications={applications} excludeIds={selectedIds} onSelect={handleSelect} />
         <SelectedApplicationsBar applications={selected} onRemove={handleRemove} />
         <div className="ml-auto flex items-center gap-2">
+          <DiscoverViewModeToggle />
           {/* Roots are the graph's only anchors, and anything no longer
               reachable from one is pruned — so "no chip" means "empty
               canvas", and there is nothing to export. */}
