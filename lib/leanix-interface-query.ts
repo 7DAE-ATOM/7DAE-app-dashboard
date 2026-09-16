@@ -54,6 +54,7 @@ query {
                           factSheet {
                             id
                             name
+                            description
                             ... on DataObject {
                               externalId { externalId }
                             }
@@ -99,6 +100,7 @@ query {
                           factSheet {
                             id
                             name
+                            description
                             ... on DataObject {
                               externalId { externalId }
                             }
@@ -168,6 +170,7 @@ query {
                 factSheet {
                   id
                   name
+                  description
                   ... on DataObject {
                     externalId { externalId }
                   }

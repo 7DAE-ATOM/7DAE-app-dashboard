@@ -74,6 +74,10 @@ export type ApplicationLifecycle = {
 export type DataObject = {
   id: string;
   name: string;
+  /** Only populated for the data objects of an Interface — see
+   * `relInterfaceToDataObject` in `lib/leanix-interface-query.ts`. The
+   * Application query does not request it. */
+  description?: string | null;
 };
 
 /** A Business Capability FactSheet linked to an application via
@@ -190,6 +194,10 @@ export type DiscoverInterfaceNode = {
   /** Technical id of the provider Application — always known once an
    * Interface node exists, since it anchors the circle's position. */
   providerId: string;
+  externalId: string | null;
+  /** What flows through this interface. Deduplicated and sorted by name by
+   * the adapter, so consumers render the list as-is. */
+  dataObjects: DataObject[];
 };
 
 export type DiscoverGraphNode = DiscoverApplicationNode | DiscoverInterfaceNode;

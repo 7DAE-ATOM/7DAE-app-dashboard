@@ -1,111 +1,18 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Application } from "@/lib/types";
 import { CATEGORY_LABELS } from "@/lib/labels";
 import GripIcon from "@/components/icons/GripIcon";
+import { ResizeHandle, useDragMove, useDragResizeHeight } from "./infoCardGestures";
 
 type Props = {
   application: Application | null;
   onClose: () => void;
 };
 
-const RESIZABLE_MIN_HEIGHT = 24;
-const RESIZABLE_MAX_HEIGHT = 240;
 const DATA_OBJECTS_DEFAULT_HEIGHT = 48;
 const DESCRIPTION_DEFAULT_HEIGHT = 64;
-
-/** Drag-to-resize a section's height via a small handle below it — used for
- * both Data Objects and Description, each growing the card itself (unlike a
- * fixed-size box) as the user drags. */
-function useDragResizeHeight(defaultHeight: number) {
-  const [height, setHeight] = useState(defaultHeight);
-  const dragRef = useRef<{ startClientY: number; startHeight: number } | null>(null);
-
-  const reset = useCallback(() => setHeight(defaultHeight), [defaultHeight]);
-
-  const onPointerDown = useCallback(
-    (e: React.PointerEvent<HTMLDivElement>) => {
-      e.stopPropagation();
-      e.currentTarget.setPointerCapture(e.pointerId);
-      dragRef.current = { startClientY: e.clientY, startHeight: height };
-
-      const onPointerMove = (moveEvent: PointerEvent) => {
-        if (!dragRef.current) return;
-        const delta = moveEvent.clientY - dragRef.current.startClientY;
-        const proposed = dragRef.current.startHeight + delta;
-        setHeight(Math.min(RESIZABLE_MAX_HEIGHT, Math.max(RESIZABLE_MIN_HEIGHT, proposed)));
-      };
-      const onPointerUp = () => {
-        dragRef.current = null;
-        document.removeEventListener("pointermove", onPointerMove);
-        document.removeEventListener("pointerup", onPointerUp);
-      };
-      document.addEventListener("pointermove", onPointerMove);
-      document.addEventListener("pointerup", onPointerUp);
-    },
-    [height],
-  );
-
-  return { height, onPointerDown, reset };
-}
-
-/** Drag-to-move the whole card via its header — an offset applied on top of
- * the card's default anchor position (right of the info icon), reset
- * whenever a different application's card opens. */
-function useDragMove() {
-  const [offset, setOffset] = useState({ x: 0, y: 0 });
-  const dragRef = useRef<{
-    startClientX: number;
-    startClientY: number;
-    startX: number;
-    startY: number;
-  } | null>(null);
-
-  const reset = useCallback(() => setOffset({ x: 0, y: 0 }), []);
-
-  const onPointerDown = useCallback(
-    (e: React.PointerEvent<HTMLDivElement>) => {
-      e.stopPropagation();
-      e.currentTarget.setPointerCapture(e.pointerId);
-      dragRef.current = {
-        startClientX: e.clientX,
-        startClientY: e.clientY,
-        startX: offset.x,
-        startY: offset.y,
-      };
-
-      const onPointerMove = (moveEvent: PointerEvent) => {
-        if (!dragRef.current) return;
-        setOffset({
-          x: dragRef.current.startX + (moveEvent.clientX - dragRef.current.startClientX),
-          y: dragRef.current.startY + (moveEvent.clientY - dragRef.current.startClientY),
-        });
-      };
-      const onPointerUp = () => {
-        dragRef.current = null;
-        document.removeEventListener("pointermove", onPointerMove);
-        document.removeEventListener("pointerup", onPointerUp);
-      };
-      document.addEventListener("pointermove", onPointerMove);
-      document.addEventListener("pointerup", onPointerUp);
-    },
-    [offset],
-  );
-
-  return { offset, onPointerDown, reset };
-}
-
-function ResizeHandle({ onPointerDown }: Readonly<{ onPointerDown: (e: React.PointerEvent<HTMLDivElement>) => void }>) {
-  return (
-    <div
-      className="nodrag -my-0.5 flex h-2.5 cursor-ns-resize items-center justify-center"
-      onPointerDown={onPointerDown}
-    >
-      <div className="h-1 w-8 rounded-full bg-border" />
-    </div>
-  );
-}
 
 function Field({ label, value }: Readonly<{ label: string; value: string | null }>) {
   return (

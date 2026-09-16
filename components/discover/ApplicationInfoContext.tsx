@@ -5,7 +5,12 @@ import type { Application } from "@/lib/types";
 
 export type ApplicationInfoContextValue = {
   openApplicationId: string | null;
+  /** Interfaces get the same treatment (see `InterfaceInfoCard`). The two ids
+   * are derived from a single piece of state in `DiscoverGraph`, so at most
+   * one card is ever open. */
+  openInterfaceId: string | null;
   toggle: (id: string) => void;
+  toggleInterface: (id: string) => void;
   close: () => void;
   resolveApplication: (id: string) => Application | null;
 };
@@ -16,7 +21,9 @@ export type ApplicationInfoContextValue = {
  * rebuilding every Application node's data object on each open/close). */
 export const ApplicationInfoContext = createContext<ApplicationInfoContextValue>({
   openApplicationId: null,
+  openInterfaceId: null,
   toggle: () => {},
+  toggleInterface: () => {},
   close: () => {},
   resolveApplication: () => null,
 });

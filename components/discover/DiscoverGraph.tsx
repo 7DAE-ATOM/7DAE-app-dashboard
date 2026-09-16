@@ -197,36 +197,63 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
   const [seedError, setSeedError] = useState<string | null>(null);
   const [seeding, setSeeding] = useState(false);
   const [contextMenu, setContextMenu] = useState<DiscoverContextMenuTarget | null>(null);
-  const [openApplicationId, setOpenApplicationId] = useState<string | null>(null);
+  // One piece of state for both kinds of identity card, which is what makes
+  // them mutually exclusive for free: opening an interface's card closes an
+  // application's, and vice versa.
+  const [openInfo, setOpenInfo] = useState<
+    { kind: "application" | "interface"; id: string } | null
+  >(null);
   const containerRef = useRef<HTMLDivElement>(null);
   /** Captured via `onInit` instead of `useReactFlow()` so the component
    * doesn't have to be split around a `ReactFlowProvider` just to re-fit the
    * view after the batch seed lands (the `fitView` prop is mount-only). */
   const flowRef = useRef<ReactFlowInstance | null>(null);
 
-  const closeApplicationInfo = useCallback(() => setOpenApplicationId(null), []);
+  const closeApplicationInfo = useCallback(() => setOpenInfo(null), []);
   const toggleApplicationInfo = useCallback(
-    (id: string) => setOpenApplicationId((current) => (current === id ? null : id)),
+    (id: string) =>
+      setOpenInfo((current) =>
+        current?.kind === "application" && current.id === id
+          ? null
+          : { kind: "application", id },
+      ),
+    [],
+  );
+  const toggleInterfaceInfo = useCallback(
+    (id: string) =>
+      setOpenInfo((current) =>
+        current?.kind === "interface" && current.id === id
+          ? null
+          : { kind: "interface", id },
+      ),
     [],
   );
   const applicationInfoValue = useMemo(
     () => ({
-      openApplicationId,
+      openApplicationId: openInfo?.kind === "application" ? openInfo.id : null,
+      openInterfaceId: openInfo?.kind === "interface" ? openInfo.id : null,
       toggle: toggleApplicationInfo,
+      toggleInterface: toggleInterfaceInfo,
       close: closeApplicationInfo,
       resolveApplication,
     }),
-    [openApplicationId, toggleApplicationInfo, closeApplicationInfo, resolveApplication],
+    [
+      openInfo,
+      toggleApplicationInfo,
+      toggleInterfaceInfo,
+      closeApplicationInfo,
+      resolveApplication,
+    ],
   );
 
   useEffect(() => {
-    if (!openApplicationId) return;
+    if (!openInfo) return;
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") closeApplicationInfo();
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [openApplicationId, closeApplicationInfo]);
+  }, [openInfo, closeApplicationInfo]);
 
   const nodesRef = useRef(nodes);
   nodesRef.current = nodes;
@@ -379,7 +406,12 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
       // with no extra code needed here or in the drag handler.
       position,
       parentId,
-      data: { name: iface.name, protocol: iface.protocol } satisfies InterfaceNodeData,
+      data: {
+        name: iface.name,
+        protocol: iface.protocol,
+        externalId: iface.externalId,
+        dataObjects: iface.dataObjects,
+      } satisfies InterfaceNodeData,
     };
   }
 
@@ -396,7 +428,32 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
     (current: Node[], providerId: string, newInterfaces: DiscoverInterfaceNode[]): Node[] => {
       const existingIds = new Set(current.map((n) => n.id));
       const toAdd = newInterfaces.filter((i) => !existingIds.has(i.id));
-      if (toAdd.length === 0) return current;
+
+      // An interface can be discovered twice — first as provided, later as
+      // consumed (or the reverse) — and only one of the two responses may
+      // carry its data objects. Node data is frozen at creation, so refresh
+      // what the newcomer knows better before deciding there is nothing to do.
+      const incoming = new Map(newInterfaces.map((i) => [i.id, i]));
+      const refreshed = current.map((n) => {
+        if (n.type !== "interface") return n;
+        const fresh = incoming.get(n.id);
+        if (!fresh) return n;
+        const data = n.data as unknown as InterfaceNodeData;
+        const gainsDataObjects =
+          fresh.dataObjects.length > 0 && (data.dataObjects?.length ?? 0) === 0;
+        const gainsExternalId = !data.externalId && !!fresh.externalId;
+        if (!gainsDataObjects && !gainsExternalId) return n;
+        return {
+          ...n,
+          data: {
+            ...data,
+            dataObjects: gainsDataObjects ? fresh.dataObjects : data.dataObjects,
+            externalId: gainsExternalId ? fresh.externalId : data.externalId,
+          } satisfies InterfaceNodeData,
+        };
+      });
+
+      if (toAdd.length === 0) return refreshed;
 
       const provider = current.find((n) => n.id === providerId);
       const providerWidth = provider ? boxSizeOf(provider).width : APP_NODE_WIDTH;
@@ -419,7 +476,7 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
         interfaceSlotRef.current.set(iface.id, slot);
         return makeInterfaceNode(iface, interfaceSlotPosition(slot, providerWidth), providerId);
       });
-      return [...current, ...newNodes];
+      return [...refreshed, ...newNodes];
     },
     [],
   );
@@ -792,6 +849,8 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
                 id: n.id,
                 name: data.name,
                 protocol: data.protocol,
+                externalId: data.externalId,
+                dataObjects: data.dataObjects,
                 providerId: interfaceProviderRef.current.get(n.id) ?? n.parentId ?? "",
               };
             }),

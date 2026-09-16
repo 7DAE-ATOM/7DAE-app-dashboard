@@ -2,7 +2,12 @@ import type {
   ApplicationInterfacesNode,
   InterfaceNode,
 } from "./atom-api";
-import type { DiscoverApplicationNode, DiscoverEdge, DiscoverInterfaceNode } from "./types";
+import type {
+  DataObject,
+  DiscoverApplicationNode,
+  DiscoverEdge,
+  DiscoverInterfaceNode,
+} from "./types";
 
 /** `managerName` is never known from these GraphQL shapes (the Interface
  * queries don't carry it) — callers resolve it separately from the
@@ -21,6 +26,24 @@ function toApplicationNode(factSheet: {
   };
 }
 
+/** Same tolerance as `mapDataObjects` in `lib/application-adapter.ts` — a null
+ * FactSheet is skipped, a blank name falls back to a dash. Deduplicated (the
+ * same data object can be attached twice) and sorted here rather than in the
+ * card, so the list is stable from one opening to the next. */
+function toDataObjects(rel: InterfaceNode["relInterfaceToDataObject"]): DataObject[] {
+  const byId = new Map<string, DataObject>();
+  for (const edge of rel?.edges ?? []) {
+    const fs = edge.node.factSheet;
+    if (!fs || byId.has(fs.id)) continue;
+    byId.set(fs.id, {
+      id: fs.id,
+      name: fs.name?.trim() || "—",
+      description: fs.description ?? null,
+    });
+  }
+  return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
 function toInterfaceNode(iface: InterfaceNode, providerId: string): DiscoverInterfaceNode {
   return {
     kind: "interface",
@@ -28,6 +51,8 @@ function toInterfaceNode(iface: InterfaceNode, providerId: string): DiscoverInte
     name: iface.name,
     protocol: iface.protocol,
     providerId,
+    externalId: iface.externalId?.externalId ?? null,
+    dataObjects: toDataObjects(iface.relInterfaceToDataObject),
   };
 }
 

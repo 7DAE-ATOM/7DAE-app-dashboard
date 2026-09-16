@@ -423,6 +423,11 @@ export type DataObjectEdge = {
     factSheet: {
       id: string;
       name: string | null;
+      /** Only requested by `relInterfaceToDataObject`, which is the one place
+       * that displays it (the Discover interface card). Optional because the
+       * Application and Business Capability queries share this shape without
+       * paying for the field. */
+      description?: string | null;
       externalId?: { externalId: string } | null;
     } | null;
   };
