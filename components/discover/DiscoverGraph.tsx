@@ -52,6 +52,7 @@ import GraphEdge, { type GraphEdgeData } from "./GraphEdge";
 import NodeContextMenu, { type DiscoverContextMenuTarget } from "./NodeContextMenu";
 import { ApplicationInfoContext } from "./ApplicationInfoContext";
 import type { Application } from "@/lib/types";
+import type { DiscoverGraphSnapshot } from "@/lib/discoverMermaid";
 
 const nodeTypes = { application: ApplicationNodeComponent, interface: InterfaceNodeComponent };
 const edgeTypes = { graphEdge: GraphEdge };
@@ -59,6 +60,10 @@ const edgeTypes = { graphEdge: GraphEdge };
 export type DiscoverGraphHandle = {
   addApplication: (app: DiscoverApplicationNode) => void;
   removeApplication: (id: string) => void;
+  /** What is on the canvas right now, in plain data — the graph's topology
+   * lives here, so an exporter has no other way to reach it. Read-only: it
+   * moves, refits and selects nothing. */
+  snapshot: () => DiscoverGraphSnapshot;
 };
 
 type Props = {
@@ -704,9 +709,49 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
     [removeApplication, onApplicationHidden],
   );
 
-  useImperativeHandle(ref, () => ({ addApplication, removeApplication }), [
+  /** Reads refs only — `nodesRef`/`edgeMetaRef` are re-synced on every render
+   * — so it never needs to be rebuilt, and the handle's identity stays put. */
+  const snapshot = useCallback((): DiscoverGraphSnapshot => {
+    const current = nodesRef.current;
+    const present = new Set(current.map((n) => n.id));
+    return {
+      applications: current
+        .filter((n) => n.type === "application")
+        .map((n) => {
+          const data = n.data as unknown as ApplicationNodeData;
+          return {
+            id: n.id,
+            name: data.name,
+            externalId: data.externalId,
+            // `rootIdsRef`, not `data.isRoot`: the ref is the live set of
+            // selected applications, while `data.isRoot` was frozen when the
+            // node was built.
+            isRoot: rootIdsRef.current.has(n.id),
+          };
+        }),
+      interfaces: current
+        .filter((n) => n.type === "interface")
+        .map((n) => {
+          const data = n.data as unknown as InterfaceNodeData;
+          return {
+            id: n.id,
+            name: data.name,
+            protocol: data.protocol,
+            providerId: interfaceProviderRef.current.get(n.id) ?? n.parentId ?? "",
+          };
+        }),
+      // `edgeMeta` is the model; the `edges` memo below is geometry. Both
+      // ends re-checked so a pruning race can't leave a dangling link.
+      edges: edgeMetaRef.current.filter(
+        (e) => present.has(e.consumerId) && present.has(e.interfaceId),
+      ),
+    };
+  }, []);
+
+  useImperativeHandle(ref, () => ({ addApplication, removeApplication, snapshot }), [
     addApplication,
     removeApplication,
+    snapshot,
   ]);
 
   const edges = useMemo<Edge[]>(() => {

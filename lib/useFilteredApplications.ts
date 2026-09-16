@@ -18,9 +18,10 @@ export type FilteredApplications = {
    * omits the whole section rather than showing it empty. */
   capabilityTree: BusinessCapabilityTree | null;
   capabilityCounts: Map<string, number>;
-  /** How many applications `visible` would hold under another filter — the
-   * hover preview on each filter option. Same pipeline, so a preview and the
-   * result it announces can never disagree. */
+  /** How many applications `visible` would hold under another filter — what
+   * feeds the facet count on each filter option (that axis narrowed to the one
+   * option, the others left as they are). Same pipeline as `visible`, so a
+   * count and the result it announces can never disagree. */
   countUnder: (next: FilterValue) => number;
 };
 

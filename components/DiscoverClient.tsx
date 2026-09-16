@@ -9,7 +9,10 @@ import type { Application, DiscoverApplicationNode } from "@/lib/types";
 import ApplicationSearch from "@/components/discover/ApplicationSearch";
 import SelectedApplicationsBar from "@/components/discover/SelectedApplicationsBar";
 import DiscoverDisplaySettings from "@/components/discover/DiscoverDisplaySettings";
+import DiscoverExportMenu from "@/components/discover/DiscoverExportMenu";
 import type { DiscoverGraphHandle } from "@/components/discover/DiscoverGraph";
+import { toMermaid } from "@/lib/discoverMermaid";
+import { downloadBlob, exportDateStamp } from "@/lib/downloadBlob";
 
 const DiscoverGraph = dynamic(() => import("@/components/discover/DiscoverGraph"), {
   ssr: false,
@@ -109,6 +112,15 @@ export default function DiscoverClient() {
 
   const selectedIds = useMemo(() => new Set(selected.map((a) => a.id)), [selected]);
 
+  const handleExportMermaid = useCallback(() => {
+    const graph = graphRef.current?.snapshot();
+    if (!graph) return;
+    const blob = new Blob([toMermaid(graph)], {
+      type: "text/plain;charset=utf-8",
+    });
+    downloadBlob(blob, `discover-export-${exportDateStamp()}.mmd`);
+  }, []);
+
   if (error) throw error;
 
   return (
@@ -116,7 +128,14 @@ export default function DiscoverClient() {
       <div className="flex items-center gap-3 border-b border-border bg-surface p-3">
         <ApplicationSearch applications={applications} excludeIds={selectedIds} onSelect={handleSelect} />
         <SelectedApplicationsBar applications={selected} onRemove={handleRemove} />
-        <div className="ml-auto">
+        <div className="ml-auto flex items-center gap-2">
+          {/* Roots are the graph's only anchors, and anything no longer
+              reachable from one is pruned — so "no chip" means "empty
+              canvas", and there is nothing to export. */}
+          <DiscoverExportMenu
+            disabled={selected.length === 0}
+            onExportMermaid={handleExportMermaid}
+          />
           <DiscoverDisplaySettings />
         </div>
       </div>

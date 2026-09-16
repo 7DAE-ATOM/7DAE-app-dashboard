@@ -74,8 +74,9 @@ type Props = {
    * PDF / Show in Discover buttons, passed by both pages. Left out, no row
    * is rendered at all. */
   actions?: ReactNode;
-  /** How many applications would be visible under the given hypothetical
-   * filter, shown on every option. Left out, the options carry no count. */
+  /** How many applications are visible under the given hypothetical filter.
+   * Each option shows its own facet count — this axis narrowed to that single
+   * option, the other axes as currently set. Left out, no count is shown. */
   previewCount?: (next: FilterValue) => number;
   value: FilterValue;
   onChange: (v: FilterValue) => void;
@@ -99,32 +100,35 @@ function Toggle<T extends string>({
   renderLabel?: (o: T) => string;
   optionClassName?: (o: T) => string | undefined;
   cols?: number;
-  /** How many applications would remain if this chapter held `nextValues`.
-   * Bound per chapter by the caller; absent → no counts shown. */
+  /** How many applications remain if this chapter held exactly `nextValues`,
+   * every other axis unchanged. Bound per chapter by the caller; absent → no
+   * counts shown. */
   previewCount?: (nextValues: T[]) => number;
 }) {
   const containerClass = cols ? "grid gap-1" : "flex flex-wrap gap-1";
   const containerStyle = cols
     ? { gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }
     : undefined;
+  // Facet counts: each option is measured with *itself alone* on this axis,
+  // the other axes kept as they are. So ticking a second option of the same
+  // chapter leaves every count here untouched — only a filter set in another
+  // chapter moves them. Counting the toggled selection instead (what a click
+  // would yield) made an option's own number jump to the unfiltered total as
+  // soon as it was selected, which read as noise.
+  //
   // One filtering pass per option, recomputed when the options or the
   // selection change — a linear scan over a few hundred applications, so the
   // whole chapter costs less than a render of the cards behind it.
   const preview = useMemo(() => {
     if (!previewCount) return null;
-    return new Map(
-      options.map((o) => [
-        o,
-        previewCount(value.includes(o) ? value.filter((v) => v !== o) : [...value, o]),
-      ]),
-    );
-  }, [options, value, previewCount]);
+    return new Map(options.map((o) => [o, previewCount([o])]));
+  }, [options, previewCount]);
   return (
     <div className={containerClass} style={containerStyle}>
       {options.map((o) => {
         const active = value.includes(o);
-        // The one expression behind both the click and its preview: if they
-        // ever drifted apart the preview would start lying.
+        // What a click sends back: OR inside the chapter. The number next to
+        // the label is *not* this set — see the facet comment above.
         const toggled = active ? value.filter((v) => v !== o) : [...value, o];
         const count = preview?.get(o) ?? null;
         return (

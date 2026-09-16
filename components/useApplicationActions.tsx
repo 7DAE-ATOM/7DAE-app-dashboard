@@ -10,6 +10,7 @@ import {
   buildDiscoverSeedHref,
   storeSeedIds,
 } from "@/lib/discoverSeed";
+import { downloadBlob, exportDateStamp } from "@/lib/downloadBlob";
 import { serializeFilters } from "@/lib/filterDescription";
 import type { Application, BusinessCapabilityTree } from "@/lib/types";
 
@@ -124,14 +125,7 @@ export function useApplicationActions({
           baseUrl: window.location.origin,
         }),
       ).toBlob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `application-export-${new Date().toISOString().slice(0, 10)}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
+      downloadBlob(blob, `application-export-${exportDateStamp()}.pdf`);
     } catch (e) {
       alert(`Export failed: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
