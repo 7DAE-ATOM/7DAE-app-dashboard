@@ -15,7 +15,7 @@ import DataTab from "@/components/detail/DataTab";
 import InContextTab from "@/components/detail/InContextTab";
 import { getApplicationByExternalId } from "@/lib/applications";
 import { SWR_KEY_APPLICATIONS } from "@/lib/useApplications";
-import { getCatalogueState } from "@/lib/catalogueFilters";
+import { getCatalogueState } from "@/lib/appFilters";
 import type { Application, LinkedResourceRef } from "@/lib/types";
 
 function DetailSkeleton() {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
+import { useId, useMemo, type ReactNode } from "react";
 import type {
   ApplicationCategory,
   ApplicationStatus,
@@ -11,26 +11,22 @@ import type {
 import CapabilityTreeFilter from "@/components/CapabilityTreeFilter";
 import ChevronIcon from "@/components/icons/ChevronIcon";
 import { PORTFOLIO_NONE } from "@/lib/applications";
+import { countActiveFilters } from "@/lib/appFilters";
 import {
   BUSINESS_CRITICALITY_LABELS,
   CATEGORY_LABELS,
   STATUS_LABELS,
 } from "@/lib/labels";
+import {
+  toggleFilterSection,
+  useOpenFilterSections,
+  type SectionKey,
+} from "@/lib/filterSectionState";
 import clsx from "clsx";
 
 /** Stable reference so a missing `capabilityCounts` doesn't remount the
  * tree on every render. */
 const EMPTY_COUNTS: Map<string, number> = new Map();
-
-/** The foldable chapters of the FILTERING block, in render order. */
-type SectionKey =
-  | "photo"
-  | "category"
-  | "status"
-  | "portfolio"
-  | "operator"
-  | "criticality"
-  | "capabilities";
 
 const STATUS_ORDER: ApplicationStatus[] = [
   "active",
@@ -68,19 +64,24 @@ type Props = {
   portfolios: string[];
   businessCriticalities: BusinessCriticality[];
   /** `null` while the hierarchy is loading, or if its crawl failed — the
-   * whole section is then omitted rather than shown empty or broken.
-   * Omitted entirely by `/map`, which doesn't carry this axis. */
+   * whole section is then omitted rather than shown empty or broken. */
   capabilityTree?: BusinessCapabilityTree | null;
   capabilityCounts?: Map<string, number>;
   /** Remount key for the tree: its expanded/collapsed state is local, so
    * bumping this is what collapses it again when filters are reset. */
   capabilityResetToken?: number;
-  /** Optional "ACTIONS" row rendered above every filter chapter. The
-   * catalogue passes its Export PDF / Show in Discover buttons here; `/map`
-   * passes nothing and gets no row. */
+  /** Optional "ACTIONS" row rendered above every filter chapter — the Export
+   * PDF / Show in Discover buttons, passed by both pages. Left out, no row
+   * is rendered at all. */
   actions?: ReactNode;
+  /** How many applications would be visible under the given hypothetical
+   * filter, shown on every option. Left out, the options carry no count. */
+  previewCount?: (next: FilterValue) => number;
   value: FilterValue;
   onChange: (v: FilterValue) => void;
+  /** Empties every axis at once — the "Clear All" link next to FILTERING.
+   * Kept as a prop so the panel stays driven by its parent, like `onChange`. */
+  onClear: () => void;
 };
 
 function Toggle<T extends string>({
@@ -90,6 +91,7 @@ function Toggle<T extends string>({
   renderLabel,
   optionClassName,
   cols,
+  previewCount,
 }: {
   options: T[];
   value: T[];
@@ -97,31 +99,62 @@ function Toggle<T extends string>({
   renderLabel?: (o: T) => string;
   optionClassName?: (o: T) => string | undefined;
   cols?: number;
+  /** How many applications would remain if this chapter held `nextValues`.
+   * Bound per chapter by the caller; absent → no counts shown. */
+  previewCount?: (nextValues: T[]) => number;
 }) {
   const containerClass = cols ? "grid gap-1" : "flex flex-wrap gap-1";
   const containerStyle = cols
     ? { gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }
     : undefined;
+  // One filtering pass per option, recomputed when the options or the
+  // selection change — a linear scan over a few hundred applications, so the
+  // whole chapter costs less than a render of the cards behind it.
+  const preview = useMemo(() => {
+    if (!previewCount) return null;
+    return new Map(
+      options.map((o) => [
+        o,
+        previewCount(value.includes(o) ? value.filter((v) => v !== o) : [...value, o]),
+      ]),
+    );
+  }, [options, value, previewCount]);
   return (
     <div className={containerClass} style={containerStyle}>
       {options.map((o) => {
         const active = value.includes(o);
+        // The one expression behind both the click and its preview: if they
+        // ever drifted apart the preview would start lying.
+        const toggled = active ? value.filter((v) => v !== o) : [...value, o];
+        const count = preview?.get(o) ?? null;
         return (
           <button
             key={o}
             type="button"
-            onClick={() =>
-              onChange(active ? value.filter((v) => v !== o) : [...value, o])
-            }
+            onClick={() => onChange(toggled)}
             className={clsx(
-              "px-3 py-2 rounded-lg text-xs font-medium border transition-colors truncate",
+              "relative px-3 py-2 rounded-lg text-xs font-medium border transition-colors",
               active
                 ? "bg-accent text-accent-fg border-accent"
                 : "bg-surface-2 text-fg border-border hover:border-accent/50",
               optionClassName?.(o)
             )}
           >
-            {renderLabel ? renderLabel(o) : o}
+            {/* The count sits outside the flow, so a long label truncates
+              * against it instead of pushing it around. */}
+            <span className={clsx("block truncate", previewCount && "pr-6")}>
+              {renderLabel ? renderLabel(o) : o}
+            </span>
+            {count !== null && (
+              <span
+                className={clsx(
+                  "absolute right-2 top-1/2 -translate-y-1/2 text-[10px] tabular-nums",
+                  active ? "text-accent-fg/80" : "text-muted",
+                )}
+              >
+                {count}
+              </span>
+            )}
           </button>
         );
       })}
@@ -132,14 +165,27 @@ function Toggle<T extends string>({
 /** Level-1 block title — "ACTIONS" and "FILTERING". Structural label, not a
  * control: it never folds, never takes focus. Only its size sets it apart
  * from the level-2 chapter headings below. */
-function BlockTitle({ id, children }: { id: string; children: ReactNode }) {
+/** Level-1 block title (ACTIONS, FILTERING), with an optional control
+ * aligned to its right — where FILTERING puts its "Clear All" link. */
+function BlockTitle({
+  id,
+  action,
+  children,
+}: {
+  id: string;
+  action?: ReactNode;
+  children: ReactNode;
+}) {
   return (
-    <h3
-      id={id}
-      className="text-sm font-bold uppercase tracking-[0.18em] text-muted mb-2"
-    >
-      {children}
-    </h3>
+    <div className="flex items-baseline gap-2 mb-2">
+      <h3
+        id={id}
+        className="text-sm font-bold uppercase tracking-[0.18em] text-muted"
+      >
+        {children}
+      </h3>
+      {action && <span className="ml-auto">{action}</span>}
+    </div>
   );
 }
 
@@ -208,27 +254,18 @@ export default function FilterBar({
   capabilityCounts,
   capabilityResetToken = 0,
   actions,
+  previewCount,
   value,
   onChange,
+  onClear,
 }: Props) {
   // The desktop panel and the mobile sheet both mount a FilterBar, so the
   // block ids have to be unique per instance.
   const panelId = useId();
-  const [search, setSearch] = useState(value.search);
-  const [operatorSearch, setOperatorSearch] = useState(value.operator);
-  // Empty = everything unfolded, which is the first-render state: no storage
-  // read, so the panel never shows itself open and then folds.
-  const [collapsed, setCollapsed] = useState<Set<SectionKey>>(new Set());
-  // Same token that remounts the capability tree: resetting the filters
-  // unfolds every chapter too.
-  useEffect(() => setCollapsed(new Set()), [capabilityResetToken]);
-  const toggleSection = (key: SectionKey) =>
-    setCollapsed((current) => {
-      const next = new Set(current);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
+  // Folded by default, unfolded chapters restored from local storage. Shared
+  // by every mounted panel (desktop column, mobile sheet, /map), and left
+  // alone by a filter reset: emptying the filters isn't a display change.
+  const openSections = useOpenFilterSections();
   // What each chapter contributes to the filter, shown on its header so a
   // folded chapter can't narrow the catalogue unnoticed.
   const counts = useMemo<Record<SectionKey, number>>(
@@ -264,25 +301,38 @@ export default function FilterBar({
         </section>
       )}
       <section aria-labelledby={`${panelId}-filtering`}>
-        <BlockTitle id={`${panelId}-filtering`}>Filtering</BlockTitle>
+        <BlockTitle
+          id={`${panelId}-filtering`}
+          action={
+            // Nothing to clear, nothing to show.
+            countActiveFilters(value) > 0 ? (
+              <button
+                type="button"
+                onClick={onClear}
+                className="text-[11px] font-medium text-muted hover:text-accent underline underline-offset-2"
+              >
+                Clear All
+              </button>
+            ) : undefined
+          }
+        >
+          Filtering
+        </BlockTitle>
         {/* Full width: each chapter carries its own card, so the hierarchy
             reads from the block title and the framing, not from an indent. */}
         <div className="space-y-3">
           <input
             type="search"
             placeholder="Search applications, references, managers…"
-            value={search}
-            onChange={(e) => {
-              setSearch(e.target.value);
-              onChange({ ...value, search: e.target.value });
-            }}
+            value={value.search}
+            onChange={(e) => onChange({ ...value, search: e.target.value })}
             className="w-full px-3 py-2 rounded-lg bg-surface border border-border text-fg placeholder:text-muted focus:outline-none focus:border-accent"
           />
           <Section
             label="Photo"
             count={counts.photo}
-            open={!collapsed.has("photo")}
-            onToggle={() => toggleSection("photo")}
+            open={openSections.has("photo")}
+            onToggle={() => toggleFilterSection("photo")}
           >
             <div className="flex items-center gap-2.5">
               <div
@@ -319,13 +369,16 @@ export default function FilterBar({
           <Section
             label="Category"
             count={counts.category}
-            open={!collapsed.has("category")}
-            onToggle={() => toggleSection("category")}
+            open={openSections.has("category")}
+            onToggle={() => toggleFilterSection("category")}
           >
             <Toggle
               options={categories}
               value={value.categories}
               onChange={(v) => onChange({ ...value, categories: v })}
+              previewCount={
+                previewCount && ((v) => previewCount({ ...value, categories: v }))
+              }
               renderLabel={(c) => CATEGORY_LABELS[c]}
               cols={2}
             />
@@ -333,13 +386,16 @@ export default function FilterBar({
           <Section
             label="Status"
             count={counts.status}
-            open={!collapsed.has("status")}
-            onToggle={() => toggleSection("status")}
+            open={openSections.has("status")}
+            onToggle={() => toggleFilterSection("status")}
           >
             <Toggle
               options={sortedStatuses}
               value={value.statuses}
               onChange={(v) => onChange({ ...value, statuses: v })}
+              previewCount={
+                previewCount && ((v) => previewCount({ ...value, statuses: v }))
+              }
               renderLabel={(s) => STATUS_LABELS[s]}
               cols={2}
             />
@@ -347,13 +403,16 @@ export default function FilterBar({
           <Section
             label="Portfolio"
             count={counts.portfolio}
-            open={!collapsed.has("portfolio")}
-            onToggle={() => toggleSection("portfolio")}
+            open={openSections.has("portfolio")}
+            onToggle={() => toggleFilterSection("portfolio")}
           >
             <Toggle
               options={portfolios}
               value={value.portfolios}
               onChange={(v) => onChange({ ...value, portfolios: v })}
+              previewCount={
+                previewCount && ((v) => previewCount({ ...value, portfolios: v }))
+              }
               renderLabel={(p) => (p === PORTFOLIO_NONE ? "None" : p)}
               cols={2}
             />
@@ -361,30 +420,30 @@ export default function FilterBar({
           <Section
             label="Operator"
             count={counts.operator}
-            open={!collapsed.has("operator")}
-            onToggle={() => toggleSection("operator")}
+            open={openSections.has("operator")}
+            onToggle={() => toggleFilterSection("operator")}
           >
             <input
               type="search"
               placeholder="Search by operator code…"
-              value={operatorSearch}
-              onChange={(e) => {
-                setOperatorSearch(e.target.value);
-                onChange({ ...value, operator: e.target.value });
-              }}
+              value={value.operator}
+              onChange={(e) => onChange({ ...value, operator: e.target.value })}
               className="w-full px-3 py-2 rounded-lg bg-surface-2 border border-border text-fg placeholder:text-muted focus:outline-none focus:border-accent"
             />
           </Section>
           <Section
             label="Business Criticality"
             count={counts.criticality}
-            open={!collapsed.has("criticality")}
-            onToggle={() => toggleSection("criticality")}
+            open={openSections.has("criticality")}
+            onToggle={() => toggleFilterSection("criticality")}
           >
             <Toggle
               options={businessCriticalities}
               value={value.businessCriticalities}
               onChange={(v) => onChange({ ...value, businessCriticalities: v })}
+              previewCount={
+                previewCount && ((v) => previewCount({ ...value, businessCriticalities: v }))
+              }
               renderLabel={(c) => BUSINESS_CRITICALITY_LABELS[c]}
               cols={2}
             />
@@ -393,8 +452,8 @@ export default function FilterBar({
             <Section
               label="Business Capabilities"
               count={counts.capabilities}
-              open={!collapsed.has("capabilities")}
-              onToggle={() => toggleSection("capabilities")}
+              open={openSections.has("capabilities")}
+              onToggle={() => toggleFilterSection("capabilities")}
             >
               <CapabilityTreeFilter
                 key={capabilityResetToken}

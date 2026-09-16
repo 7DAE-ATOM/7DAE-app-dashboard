@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { useSearchParams } from "next/navigation";
 import { useApplications } from "@/lib/useApplications";
-import { parseSeedIds } from "@/lib/discoverSeed";
+import { consumeSeedIds, parseSeedIds } from "@/lib/discoverSeed";
 import type { Application, DiscoverApplicationNode } from "@/lib/types";
 import ApplicationSearch from "@/components/discover/ApplicationSearch";
 import SelectedApplicationsBar from "@/components/discover/SelectedApplicationsBar";
@@ -42,10 +42,19 @@ export default function DiscoverClient() {
   /** `?ids=` is a **seed**, read once: the selection the catalogue's "Show in
    * Discover" button captured. Later additions/removals deliberately don't
    * rewrite the URL, so the link stays a stable, shareable entry point. */
-  const { ids: seedIds } = useMemo(
-    () => parseSeedIds(searchParams.get("ids")),
-    [searchParams],
-  );
+  /** Two accepted forms: `?ids=` (small selections, a real shareable link)
+   * and `?seed=<token>`, which resolves through storage — see
+   * `lib/discoverSeed.ts`. `ids` wins when both are present. A token that no
+   * longer resolves is reported as expired rather than shown as an empty
+   * graph. */
+  const { seedIds, seedExpired } = useMemo(() => {
+    const fromUrl = parseSeedIds(searchParams.get("ids")).ids;
+    if (fromUrl.length > 0) return { seedIds: fromUrl, seedExpired: false };
+    const token = searchParams.get("seed");
+    if (!token) return { seedIds: [] as string[], seedExpired: false };
+    const stored = consumeSeedIds(token);
+    return { seedIds: stored ?? [], seedExpired: stored === null };
+  }, [searchParams]);
   const seedApplications = useMemo(
     () =>
       loading
@@ -64,6 +73,7 @@ export default function DiscoverClient() {
   );
   const unresolved = loading ? 0 : seedIds.length - seedApplications.length;
   const [noticeDismissed, setNoticeDismissed] = useState(false);
+  const [expiredDismissed, setExpiredDismissed] = useState(false);
 
   const seededRef = useRef(false);
   useEffect(() => {
@@ -129,6 +139,18 @@ export default function DiscoverClient() {
               onApplicationHidden={handleHidden}
             />
             {/* top-14: below the graph's own seed loading/error strip. */}
+            {seedExpired && !expiredDismissed && (
+              <div className="absolute left-1/2 top-14 z-10 flex -translate-x-1/2 items-center gap-3 rounded border border-border bg-surface px-3 py-2 text-xs text-muted shadow-lg">
+                <span>This Discover link has expired — reopen it from the catalogue.</span>
+                <button
+                  type="button"
+                  onClick={() => setExpiredDismissed(true)}
+                  className="shrink-0 hover:text-fg"
+                >
+                  Dismiss
+                </button>
+              </div>
+            )}
             {unresolved > 0 && !noticeDismissed && (
               <div className="absolute left-1/2 top-14 z-10 flex -translate-x-1/2 items-center gap-3 rounded border border-border bg-surface px-3 py-2 text-xs text-muted shadow-lg">
                 <span>

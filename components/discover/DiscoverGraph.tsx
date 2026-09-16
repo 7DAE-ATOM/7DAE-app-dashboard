@@ -1036,6 +1036,10 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
           nodesConnectable={false}
           elementsSelectable={false}
           deleteKeyCode={null}
+          // xyflow's default floor is 0.5, which clamps `fitView` as soon as
+          // the canvas holds a few hundred applications — the seed from a
+          // whole unfiltered catalogue never fits on screen at that zoom.
+          minZoom={0.02}
           fitView
           fitViewOptions={{ maxZoom: 1 }}
           onInit={(instance) => {

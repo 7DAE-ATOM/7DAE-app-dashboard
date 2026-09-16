@@ -8,7 +8,6 @@ import ThemeToggle from "./ThemeToggle";
 import AboutDialog from "./AboutDialog";
 import RefreshButton from "./RefreshButton";
 import PhotoCacheSettingsControl from "./PhotoCacheSettingsControl";
-import { resetCatalogueFilters } from "@/lib/catalogueFilters";
 
 export default function Header() {
   // usePathname() is typed `string | null` in some Next versions (e.g. 16.2.9)
@@ -34,7 +33,7 @@ export default function Header() {
 
   return (
     <header className="sticky top-0 z-20 border-b border-[#00205B]/15 bg-white">
-      <div className="relative px-4 md:px-6 py-3 flex items-center gap-6 max-w-[1600px] mx-auto">
+      <div className="relative px-4 md:px-6 py-3 flex items-center gap-6">
         <Link
           href="/"
           className="flex flex-col items-start justify-center hover:opacity-80 transition-opacity"
@@ -57,11 +56,7 @@ export default function Header() {
         </Link>
 
         <nav className="flex items-center gap-1">
-          <Link
-            href="/"
-            onClick={() => resetCatalogueFilters()}
-            className={itemClass(catalogueActive)}
-          >
+          <Link href="/" className={itemClass(catalogueActive)}>
             Catalogue
           </Link>
           <Link href="/map" className={itemClass(mapActive)}>
