@@ -54,6 +54,7 @@ import { ApplicationInfoContext } from "./ApplicationInfoContext";
 import type { Application } from "@/lib/types";
 import type { DiscoverGraphSnapshot } from "@/lib/discoverMermaid";
 import { useDiscoverViewMode } from "@/lib/discoverViewMode";
+import { pruneEdgeCurvature } from "@/lib/discoverEdgeCurvature";
 
 const nodeTypes = { application: ApplicationNodeComponent, interface: InterfaceNodeComponent };
 const edgeTypes = { graphEdge: GraphEdge };
@@ -582,6 +583,23 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
     setEdgeMeta((current) =>
       current.filter((e) => visited.has(e.consumerId) && visited.has(e.interfaceId)),
     );
+
+    // Drop the manual curvature of every edge that just disappeared, so that
+    // removing an application and adding it back does not resurrect the bends
+    // its edges used to carry. Pruning on the `edges` memo instead would also
+    // fire when switching view mode — and wipe the other view's adjustments,
+    // which are meant to survive a round trip.
+    const survivingEdgeIds = new Set(
+      edgeMetaRef.current
+        .filter((e) => visited.has(e.consumerId) && visited.has(e.interfaceId))
+        .map((e) => e.id),
+    );
+    pruneEdgeCurvature((edgeId) => {
+      if (survivingEdgeIds.has(edgeId)) return true;
+      // Simplified view ids are `${sourceId}->${targetId}`.
+      const [source, target] = edgeId.split("->");
+      return target !== undefined && visited.has(source) && visited.has(target);
+    });
   }, []);
 
   const handleShowInterfacesInbound = useCallback(
