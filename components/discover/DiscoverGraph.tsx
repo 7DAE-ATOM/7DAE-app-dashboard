@@ -814,10 +814,18 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
       // instead of landing on the exact same line.
       const drawnPerPair = new Map<string, number>();
       const result: Edge[] = [];
-      for (const { sourceId, targetId } of collapseToApplications(
+      const collapsed = collapseToApplications(
         edgeMeta,
         (interfaceId) => byId.get(interfaceId)?.parentId,
-      )) {
+      );
+      // Counting pass first: an edge needs to know whether it has a twin at
+      // the moment it is built, and `drawnPerPair` only fills in as we go.
+      const totalPerPair = new Map<string, number>();
+      for (const { sourceId, targetId } of collapsed) {
+        const pair = [sourceId, targetId].sort().join("|");
+        totalPerPair.set(pair, (totalPerPair.get(pair) ?? 0) + 1);
+      }
+      for (const { sourceId, targetId } of collapsed) {
         const source = byId.get(sourceId);
         const target = byId.get(targetId);
         if (!source || !target) continue;
@@ -839,6 +847,7 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
             tx: to.x,
             ty: to.y,
             bend: rank % 2 === 0 ? 1 : -1,
+            parallel: (totalPerPair.get(pair) ?? 1) > 1,
           } satisfies GraphEdgeData,
           markerEnd: { type: MarkerType.ArrowClosed, color: "var(--color-accent)" },
           style: { stroke: "var(--color-accent)" },
@@ -873,6 +882,7 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
             tx: to.x,
             ty: to.y,
             bend: i % 2 === 0 ? 1 : -1,
+            parallel: group.length > 1,
           } satisfies GraphEdgeData,
           markerEnd: { type: MarkerType.ArrowClosed, color: "var(--color-accent)" },
           style: { stroke: "var(--color-accent)" },

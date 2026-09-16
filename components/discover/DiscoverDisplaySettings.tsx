@@ -8,7 +8,15 @@ import {
   type DiscoverDisplaySettings,
 } from "@/lib/discoverDisplaySettings";
 
-const ROWS: { key: keyof DiscoverDisplaySettings; label: string }[] = [
+/** The settings rendered as switches — i.e. every boolean one. Keeps
+ * `edgeCurvature` out of `ROWS`, which drives `<Switch>`. */
+type ToggleKey = {
+  [K in keyof DiscoverDisplaySettings]: DiscoverDisplaySettings[K] extends boolean
+    ? K
+    : never;
+}[keyof DiscoverDisplaySettings];
+
+const ROWS: { key: ToggleKey; label: string }[] = [
   { key: "showName", label: "Name" },
   { key: "showExternalId", label: "External ID" },
   { key: "showManager", label: "Application Manager" },
@@ -64,6 +72,30 @@ export default function DiscoverDisplaySettings() {
               </div>
             ))}
           </div>
+
+          <div className="mb-1 mt-4 border-t border-border pt-3 text-xs uppercase tracking-[0.1em] text-muted">
+            Links
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            <label htmlFor="edge-curvature" className="text-sm text-fg">
+              Curvature
+            </label>
+            <span className="w-10 text-right font-mono text-xs text-muted tabular-nums">
+              {settings.edgeCurvature}%
+            </span>
+          </div>
+          <input
+            id="edge-curvature"
+            type="range"
+            min={0}
+            max={100}
+            step={10}
+            value={settings.edgeCurvature}
+            onChange={(e) =>
+              setDiscoverDisplaySetting("edgeCurvature", Number(e.target.value))
+            }
+            className="mt-2 w-full accent-[var(--color-accent)]"
+          />
         </div>
       )}
     </div>

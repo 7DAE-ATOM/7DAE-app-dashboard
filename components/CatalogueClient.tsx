@@ -33,7 +33,7 @@ import {
  * project has no safelist, so a template-built class would be purged.
  */
 const GRID_CLASS =
-  "grid grid-cols-1 sm:grid-cols-2 gap-5 lg:[grid-template-columns:repeat(var(--cat-cols,3),minmax(0,1fr))]";
+  "grid grid-cols-1 sm:grid-cols-2 gap-5 lg:[grid-template-columns:repeat(var(--cat-cols,5),minmax(0,1fr))]";
 
 function CatalogueSkeleton() {
   const { columns, pageSize } = useCatalogueDensity();

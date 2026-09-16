@@ -14,7 +14,7 @@ const themeInitScript = `(function(){try{var t=localStorage.getItem('theme');if(
 // first paint for the same reason as the theme: the grid template reads
 // `--cat-cols`, so a value restored after hydration would repaint the whole
 // catalogue. Keep the allowed values in sync with COLUMN_OPTIONS/ROW_OPTIONS.
-const densityInitScript = `(function(){var c=3,r=4;try{var s=JSON.parse(localStorage.getItem('catalogue-density'));if(s){if([3,5,8].indexOf(s.columns)>=0)c=s.columns;if(s.rows==='all'||(Number.isInteger(s.rows)&&s.rows>=1&&s.rows<=10))r=s.rows;}}catch(e){}var d=document.documentElement;d.setAttribute('data-cat-cols',String(c));d.setAttribute('data-cat-rows',String(r));d.style.setProperty('--cat-cols',String(c));})();`;
+const densityInitScript = `(function(){var c=5,r=5;try{var s=JSON.parse(localStorage.getItem('catalogue-density'));if(s){if([3,5,8].indexOf(s.columns)>=0)c=s.columns;if(s.rows==='all'||(Number.isInteger(s.rows)&&s.rows>=1&&s.rows<=10))r=s.rows;}}catch(e){}var d=document.documentElement;d.setAttribute('data-cat-cols',String(c));d.setAttribute('data-cat-rows',String(r));d.style.setProperty('--cat-cols',String(c));})();`;
 
 export default function RootLayout({
   children,
@@ -25,8 +25,8 @@ export default function RootLayout({
     <html
       lang="en"
       data-theme="dark"
-      data-cat-cols="3"
-      data-cat-rows="4"
+      data-cat-cols="5"
+      data-cat-rows="5"
       suppressHydrationWarning
     >
       <head>
