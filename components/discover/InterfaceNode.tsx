@@ -6,6 +6,7 @@ import type { DataObject } from "@/lib/types";
 import InfoIcon from "@/components/icons/InfoIcon";
 import InterfaceInfoCard from "./InterfaceInfoCard";
 import { useApplicationInfo } from "./ApplicationInfoContext";
+import { useDiscoverDisplaySettings } from "@/lib/discoverDisplaySettings";
 
 export type InterfaceNodeData = {
   name: string | null;
@@ -25,6 +26,7 @@ export default function InterfaceNode({
   data,
 }: Readonly<{ id: string; data: InterfaceNodeData }>) {
   const { openInterfaceId, toggleInterface, close } = useApplicationInfo();
+  const { showInfoIcons } = useDiscoverDisplaySettings();
   const label = data.name || data.protocol || "Interface";
   const infoOpen = openInterfaceId === id;
 
@@ -42,27 +44,35 @@ export default function InterfaceNode({
       <Handle type="source" position={Position.Right} style={{ visibility: "hidden" }} />
       <Handle type="target" position={Position.Left} style={{ visibility: "hidden" }} />
       <Handle type="target" position={Position.Right} style={{ visibility: "hidden" }} />
-      <button
-        type="button"
-        // `nodrag` plus the stopped propagation are what keep the click from
-        // dragging the circle, highlighting its links or opening the context
-        // menu — same arrangement as the application rectangle's info button.
-        className="nodrag absolute inset-0 flex items-center justify-center rounded-full text-muted hover:text-accent"
-        aria-label={`Interface info: ${label}`}
-        onClick={(e) => {
-          e.stopPropagation();
-          toggleInterface(id);
-        }}
-      >
-        <InfoIcon size={12} />
-      </button>
-      {infoOpen && (
-        <InterfaceInfoCard
-          name={data.name}
-          protocol={data.protocol}
-          dataObjects={data.dataObjects}
-          onClose={close}
-        />
+      {/* Rendered conditionally, never merely hidden: the button covers the
+          whole circle, so an invisible one would swallow every click on the
+          node. */}
+      {showInfoIcons && (
+        <>
+          <button
+            type="button"
+            // `nodrag` plus the stopped propagation are what keep the click
+            // from dragging the circle, highlighting its links or opening the
+            // context menu — same arrangement as the application rectangle's
+            // info button.
+            className="nodrag absolute inset-0 flex items-center justify-center rounded-full text-muted hover:text-accent"
+            aria-label={`Interface info: ${label}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              toggleInterface(id);
+            }}
+          >
+            <InfoIcon size={12} />
+          </button>
+          {infoOpen && (
+            <InterfaceInfoCard
+              name={data.name}
+              protocol={data.protocol}
+              dataObjects={data.dataObjects}
+              onClose={close}
+            />
+          )}
+        </>
       )}
     </div>
   );

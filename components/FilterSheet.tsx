@@ -8,6 +8,7 @@ import type {
   ApplicationCategory,
   ApplicationStatus,
   BusinessCapabilityTree,
+  DataObjectTree,
   BusinessCriticality,
 } from "@/lib/types";
 
@@ -18,6 +19,8 @@ type Props = {
   businessCriticalities: BusinessCriticality[];
   capabilityTree?: BusinessCapabilityTree | null;
   capabilityCounts?: Map<string, number>;
+  dataObjectTree?: DataObjectTree | null;
+  dataObjectCounts?: Map<string, number>;
   capabilityResetToken?: number;
   /** Forwarded to `FilterBar` — same "ACTIONS" row as on desktop. */
   actions?: ReactNode;
@@ -36,6 +39,8 @@ export default function FilterSheet({
   businessCriticalities,
   capabilityTree,
   capabilityCounts,
+  dataObjectTree,
+  dataObjectCounts,
   capabilityResetToken,
   actions,
   previewCount,
@@ -95,6 +100,8 @@ export default function FilterSheet({
                 businessCriticalities={businessCriticalities}
                 capabilityTree={capabilityTree}
                 capabilityCounts={capabilityCounts}
+                dataObjectTree={dataObjectTree}
+                dataObjectCounts={dataObjectCounts}
                 capabilityResetToken={capabilityResetToken}
                 actions={actions}
                 previewCount={previewCount}

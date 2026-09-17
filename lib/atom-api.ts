@@ -1,5 +1,6 @@
 import { buildApplicationsQuery } from "./leanix-application-query";
 import { buildBusinessCapabilitiesQuery } from "./leanix-business-capability-query";
+import { buildDataObjectsQuery } from "./leanix-data-object-query";
 import {
   buildApplicationInterfacesQuery,
   buildApplicationsInterfacesQuery,
@@ -361,6 +362,35 @@ export async function fetchAllBusinessCapabilityNodes(): Promise<BusinessCapabil
     const { allFactSheets: page } = await postGraphQL<{
       allFactSheets: AllFactSheetsResult<BusinessCapabilityNode>;
     }>(buildBusinessCapabilitiesQuery({ after }));
+    nodes.push(...page.edges.map((e) => e.node).filter((node) => !!node.id));
+    after = page.pageInfo.hasNextPage
+      ? (page.pageInfo.endCursor ?? undefined)
+      : undefined;
+  } while (after);
+  return nodes;
+}
+
+/** Same shape as `BusinessCapabilityNode`, plus the `description` shown as a
+ * tooltip in the filter tree. */
+export type DataObjectFactSheetNode = {
+  id: string;
+  externalId: { externalId: string } | null;
+  name: string | null;
+  description: string | null;
+  relToParent: { edges: DataObjectEdge[] } | null;
+};
+
+/** Same crawl as `fetchAllBusinessCapabilityNodes`, for the Data Objects
+ * hierarchy — and with the same reason not to filter on `externalId`, which is
+ * null on every Data Object today: the tree keys on the technical `id`, and
+ * dropping those nodes would tear holes in the hierarchy. */
+export async function fetchAllDataObjectNodes(): Promise<DataObjectFactSheetNode[]> {
+  const nodes: DataObjectFactSheetNode[] = [];
+  let after: string | undefined;
+  do {
+    const { allFactSheets: page } = await postGraphQL<{
+      allFactSheets: AllFactSheetsResult<DataObjectFactSheetNode>;
+    }>(buildDataObjectsQuery({ after }));
     nodes.push(...page.edges.map((e) => e.node).filter((node) => !!node.id));
     after = page.pageInfo.hasNextPage
       ? (page.pageInfo.endCursor ?? undefined)

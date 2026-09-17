@@ -115,18 +115,26 @@ export default function ApplicationNode({
       {settings.showManager && (
         <div className="truncate text-xs text-muted">{data.managerName ?? "—"}</div>
       )}
-      <button
-        type="button"
-        className="nodrag absolute bottom-0.5 right-0.5 z-10 flex items-center justify-center text-muted hover:text-accent"
-        aria-label="Application info"
-        onClick={(e) => {
-          e.stopPropagation();
-          toggle(id);
-        }}
-      >
-        <InfoIcon size={12} />
-      </button>
-      {infoOpen && <ApplicationInfoCard application={resolveApplication(id)} onClose={close} />}
+      {/* Rendered conditionally rather than hidden: an invisible button would
+          still swallow the clicks meant for the rectangle. */}
+      {settings.showInfoIcons && (
+        <>
+          <button
+            type="button"
+            className="nodrag absolute bottom-0.5 right-0.5 z-10 flex items-center justify-center text-muted hover:text-accent"
+            aria-label="Application info"
+            onClick={(e) => {
+              e.stopPropagation();
+              toggle(id);
+            }}
+          >
+            <InfoIcon size={12} />
+          </button>
+          {infoOpen && (
+            <ApplicationInfoCard application={resolveApplication(id)} onClose={close} />
+          )}
+        </>
+      )}
     </div>
   );
 }

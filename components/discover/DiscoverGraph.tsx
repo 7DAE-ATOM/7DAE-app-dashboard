@@ -54,6 +54,7 @@ import { ApplicationInfoContext } from "./ApplicationInfoContext";
 import type { Application } from "@/lib/types";
 import type { DiscoverGraphSnapshot } from "@/lib/discoverMermaid";
 import { useDiscoverViewMode } from "@/lib/discoverViewMode";
+import { useDiscoverDisplaySettings } from "@/lib/discoverDisplaySettings";
 import { pruneEdgeCurvature } from "@/lib/discoverEdgeCurvature";
 
 const nodeTypes = { application: ApplicationNodeComponent, interface: InterfaceNodeComponent };
@@ -203,6 +204,7 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
   const [openInfo, setOpenInfo] = useState<
     { kind: "application" | "interface"; id: string } | null
   >(null);
+  const { showInfoIcons } = useDiscoverDisplaySettings();
   const containerRef = useRef<HTMLDivElement>(null);
   /** Captured via `onInit` instead of `useReactFlow()` so the component
    * doesn't have to be split around a `ReactFlowProvider` just to re-fit the
@@ -254,6 +256,13 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [openInfo, closeApplicationInfo]);
+
+  // Hiding the info icons disables the feature, it doesn't merely hide it: the
+  // nodes stop rendering the card on their own, but without this the id would
+  // linger and the card would pop back the moment the icons return.
+  useEffect(() => {
+    if (!showInfoIcons) closeApplicationInfo();
+  }, [showInfoIcons, closeApplicationInfo]);
 
   const nodesRef = useRef(nodes);
   nodesRef.current = nodes;

@@ -6,12 +6,13 @@ import {
   STATUS_LABELS,
 } from "@/lib/labels";
 
-/** `capabilityNames` is passed in rather than derived here: only the caller
- * holds the capability tree, and the export header must show names, never raw
- * technical ids. */
+/** The hierarchical axes' names are passed in rather than derived here: only
+ * the caller holds the trees, and the export header must show names, never raw
+ * technical ids. A named object rather than positional arguments — two
+ * anonymous string arrays in a row would be trivially swapped. */
 export function serializeFilters(
   filters: FilterValue,
-  capabilityNames: string[] = [],
+  names: { capabilities?: string[]; dataObjects?: string[] } = {},
 ): string {
   const lines: string[] = [];
 
@@ -42,8 +43,12 @@ export function serializeFilters(
     );
   }
 
-  if (capabilityNames.length > 0) {
-    lines.push(`Business Capabilities: ${capabilityNames.join(", ")}`);
+  if (names.capabilities?.length) {
+    lines.push(`Business Capabilities: ${names.capabilities.join(", ")}`);
+  }
+
+  if (names.dataObjects?.length) {
+    lines.push(`Data Objects: ${names.dataObjects.join(", ")}`);
   }
 
   return lines.length === 0

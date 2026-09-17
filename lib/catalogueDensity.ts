@@ -12,9 +12,10 @@ import { useSyncExternalStore } from "react";
  * `--cat-cols` custom property, which is what the grid template actually
  * reads — by the inline anti-FOUC script in `app/layout.tsx`, so the very
  * first paint already uses the right number of columns. Same DOM-as-source-of-
- * truth pattern as `lib/useTheme.ts`, and for the same reason: a module-state
- * store (`lib/photoCacheSettings.ts`, `lib/discoverDisplaySettings.ts`) would
- * render the defaults once and repaint after hydration.
+ * truth pattern as `lib/useTheme.ts`, and for the same reason: going through
+ * `lib/createPersistedStore.ts` like every other preference would render the
+ * defaults once and repaint after hydration. These two are the only stores
+ * that qualify for the exception — see the rule in CLAUDE.md.
  *
  * Deliberately *not* a filter: it lives in `localStorage` (it outlives the
  * tab, like the theme), it is absent from the URL, and `clearFilters` does not

@@ -6,9 +6,10 @@ import type {
   ApplicationStatus,
   BusinessCapabilityTree,
   BusinessCriticality,
+  DataObjectTree,
   PhotoFilter,
 } from "@/lib/types";
-import CapabilityTreeFilter from "@/components/CapabilityTreeFilter";
+import HierarchyTreeFilter from "@/components/HierarchyTreeFilter";
 import ChevronIcon from "@/components/icons/ChevronIcon";
 import { PORTFOLIO_NONE } from "@/lib/applications";
 import { countActiveFilters } from "@/lib/appFilters";
@@ -56,6 +57,8 @@ export type FilterValue = {
   /** Checked Business Capability nodes, by technical id. Only what the user
    * ticked — the expansion to descendants happens at filtering time. */
   businessCapabilityIds: string[];
+  /** Checked Data Object nodes, same convention as the capabilities above. */
+  dataObjectIds: string[];
 };
 
 type Props = {
@@ -70,6 +73,10 @@ type Props = {
   /** Remount key for the tree: its expanded/collapsed state is local, so
    * bumping this is what collapses it again when filters are reset. */
   capabilityResetToken?: number;
+  /** Same contract as the capability trio above, for the Data Objects axis.
+   * The reset token is shared: one reset collapses both trees. */
+  dataObjectTree?: DataObjectTree | null;
+  dataObjectCounts?: Map<string, number>;
   /** Optional "ACTIONS" row rendered above every filter chapter — the Export
    * PDF / Show in Discover buttons, passed by both pages. Left out, no row
    * is rendered at all. */
@@ -257,6 +264,8 @@ export default function FilterBar({
   capabilityTree = null,
   capabilityCounts,
   capabilityResetToken = 0,
+  dataObjectTree = null,
+  dataObjectCounts,
   actions,
   previewCount,
   value,
@@ -281,6 +290,7 @@ export default function FilterBar({
       operator: value.operator ? 1 : 0,
       criticality: value.businessCriticalities.length,
       capabilities: value.businessCapabilityIds.length,
+    dataObjects: value.dataObjectIds.length,
     }),
     [value],
   );
@@ -459,14 +469,34 @@ export default function FilterBar({
               open={openSections.has("capabilities")}
               onToggle={() => toggleFilterSection("capabilities")}
             >
-              <CapabilityTreeFilter
+              <HierarchyTreeFilter
                 key={capabilityResetToken}
                 tree={capabilityTree}
+                searchPlaceholder="Search capabilities…"
+                emptyLabel="No capability matches."
                 counts={capabilityCounts ?? EMPTY_COUNTS}
                 value={value.businessCapabilityIds}
                 onChange={(v) =>
                   onChange({ ...value, businessCapabilityIds: v })
                 }
+              />
+            </Section>
+          )}
+          {dataObjectTree && (
+            <Section
+              label="Data Objects"
+              count={counts.dataObjects}
+              open={openSections.has("dataObjects")}
+              onToggle={() => toggleFilterSection("dataObjects")}
+            >
+              <HierarchyTreeFilter
+                key={capabilityResetToken}
+                tree={dataObjectTree}
+                searchPlaceholder="Search data objects…"
+                emptyLabel="No data object matches."
+                counts={dataObjectCounts ?? EMPTY_COUNTS}
+                value={value.dataObjectIds}
+                onChange={(v) => onChange({ ...value, dataObjectIds: v })}
               />
             </Section>
           )}

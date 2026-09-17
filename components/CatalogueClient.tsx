@@ -110,7 +110,14 @@ function CatalogueLoaded({
   // tab, and are the same ones the map panel shows.
   const { filters, resetToken } = useCatalogueFilters();
 
-  const { visible, capabilityTree, capabilityCounts, countUnder } =
+  const {
+    visible,
+    capabilityTree,
+    capabilityCounts,
+    dataObjectTree,
+    dataObjectCounts,
+    countUnder,
+  } =
     useFilteredApplications(applications, filters);
 
   const { columns, rows, pageSize } = useCatalogueDensity();
@@ -154,6 +161,7 @@ function CatalogueLoaded({
     visible,
     filters,
     capabilityTree,
+    dataObjectTree,
   });
 
   return (
@@ -168,6 +176,8 @@ function CatalogueLoaded({
             businessCriticalities={businessCriticalities}
             capabilityTree={capabilityTree}
             capabilityCounts={capabilityCounts}
+            dataObjectTree={dataObjectTree}
+            dataObjectCounts={dataObjectCounts}
             capabilityResetToken={resetToken}
             actions={actions}
             previewCount={countUnder}
@@ -213,6 +223,8 @@ function CatalogueLoaded({
         businessCriticalities={businessCriticalities}
         capabilityTree={capabilityTree}
         capabilityCounts={capabilityCounts}
+        dataObjectTree={dataObjectTree}
+        dataObjectCounts={dataObjectCounts}
         capabilityResetToken={resetToken}
         actions={actions}
         previewCount={countUnder}

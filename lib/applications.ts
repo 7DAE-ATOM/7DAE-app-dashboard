@@ -50,6 +50,9 @@ export type Filters = {
    * actually checked: the two must never be confused, and the different name
    * keeps `FilterValue` structurally assignable to `Filters`. */
   businessCapabilityIdsExpanded?: Set<string>;
+  /** Data Object ids, same convention and same reasons as the capability set
+   * above. */
+  dataObjectIdsExpanded?: Set<string>;
 };
 
 export function filterApplications(
@@ -82,6 +85,13 @@ export function filterApplications(
           f.businessCapabilityIdsExpanded!.has(bc.id),
         )
       ) {
+        return false;
+      }
+    }
+    if (f.dataObjectIdsExpanded?.size) {
+      // Many-to-many like the capabilities: one data object inside a checked
+      // node's subtree is enough.
+      if (!m.dataObjects.some((d) => f.dataObjectIdsExpanded!.has(d.id))) {
         return false;
       }
     }

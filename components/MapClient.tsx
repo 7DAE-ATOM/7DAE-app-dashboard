@@ -66,7 +66,14 @@ function MapLoaded({
   // other way round.
   const { filters, resetToken } = useCatalogueFilters();
 
-  const { visible, capabilityTree, capabilityCounts, countUnder } =
+  const {
+    visible,
+    capabilityTree,
+    capabilityCounts,
+    dataObjectTree,
+    dataObjectCounts,
+    countUnder,
+  } =
     useFilteredApplications(applications, filters);
 
   const { actions, dialog } = useApplicationActions({
@@ -74,6 +81,7 @@ function MapLoaded({
     visible,
     filters,
     capabilityTree,
+    dataObjectTree,
   });
 
   return (
@@ -92,6 +100,8 @@ function MapLoaded({
         businessCriticalities={businessCriticalities}
         capabilityTree={capabilityTree}
         capabilityCounts={capabilityCounts}
+        dataObjectTree={dataObjectTree}
+        dataObjectCounts={dataObjectCounts}
         capabilityResetToken={resetToken}
         actions={actions}
         previewCount={countUnder}
@@ -108,6 +118,8 @@ function MapLoaded({
         businessCriticalities={businessCriticalities}
         capabilityTree={capabilityTree}
         capabilityCounts={capabilityCounts}
+        dataObjectTree={dataObjectTree}
+        dataObjectCounts={dataObjectCounts}
         capabilityResetToken={resetToken}
         actions={actions}
         previewCount={countUnder}

@@ -3,6 +3,7 @@
 import { useSyncExternalStore } from "react";
 import type { FilterValue } from "@/components/FilterBar";
 import type { PhotoFilter } from "@/lib/types";
+import { createPersistedStore } from "@/lib/createPersistedStore";
 
 /**
  * Single source of truth for the filters of **every** panel: the catalogue,
@@ -13,10 +14,13 @@ import type { PhotoFilter } from "@/lib/types";
  * the tab but not its closing. Deliberately shorter-lived than the panel's
  * folded/unfolded state (`lib/filterSectionState.ts`, `localStorage`): a
  * narrow filter forgotten since yesterday would look like an empty catalogue,
- * where a folded chapter is harmless.
+ * where a folded chapter is harmless. And deliberately *not* synced across
+ * tabs — two tabs scoped to two different perimeters is a legitimate use.
  *
- * Same external-store pattern as `lib/photoCacheSettings.ts`
- * (`useSyncExternalStore` + storage).
+ * This module is the one place that mixes persisted state (the filters, held
+ * by `createPersistedStore`) with volatile state (`page`, `resetToken`, which
+ * must never outlive the view). `useCatalogueFilters()` composes the two into
+ * a single snapshot, which is what its consumers have always received.
  */
 
 export const DEFAULT_FILTERS: FilterValue = {
@@ -28,6 +32,7 @@ export const DEFAULT_FILTERS: FilterValue = {
   operator: "",
   businessCriticalities: [],
   businessCapabilityIds: [],
+  dataObjectIds: [],
 };
 
 export type CatalogueState = {
@@ -44,13 +49,7 @@ export type CatalogueState = {
 // Stable default reference for the server snapshot (static export render).
 const DEFAULT_STATE: CatalogueState = { filters: DEFAULT_FILTERS, page: 1, resetToken: 0 };
 
-const STORAGE_KEY = "app-filters";
-
 const PHOTO_VALUES: PhotoFilter[] = ["all", "with", "without"];
-
-let state: CatalogueState = DEFAULT_STATE;
-let hydrated = false;
-const listeners = new Set<() => void>();
 
 function stringArray(v: unknown): string[] | null {
   return Array.isArray(v) && v.every((x) => typeof x === "string")
@@ -84,44 +83,54 @@ function restore(raw: string): FilterValue | null {
     businessCapabilityIds:
       stringArray(p.businessCapabilityIds) ??
       DEFAULT_FILTERS.businessCapabilityIds,
+    dataObjectIds: stringArray(p.dataObjectIds) ?? DEFAULT_FILTERS.dataObjectIds,
   };
 }
 
-function hydrate(): void {
-  if (hydrated || globalThis.window === undefined) return;
-  hydrated = true;
-  try {
-    const raw = globalThis.sessionStorage.getItem(STORAGE_KEY);
-    if (!raw) return;
-    const filters = restore(raw);
-    if (filters) state = { ...state, filters };
-  } catch {
-    // sessionStorage unavailable or corrupt value — keep the empty filters
-  }
+const filtersStore = createPersistedStore<FilterValue>({
+  key: "app-filters",
+  storage: "session",
+  defaultValue: DEFAULT_FILTERS,
+  parse: restore,
+});
+
+// The volatile half. Its listeners are the very same callbacks the filters
+// store holds, so a change that touches both (`clearFilters`) must notify
+// only once — hence the volatile values being set *before* the filters.
+let page = DEFAULT_STATE.page;
+let resetToken = DEFAULT_STATE.resetToken;
+const volatileListeners = new Set<() => void>();
+
+function emitVolatile(): void {
+  for (const l of volatileListeners) l();
 }
 
-function persist(filters: FilterValue): void {
-  try {
-    globalThis.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(filters));
-  } catch {
-    // sessionStorage unavailable (private mode, etc.) — filters are still
-    // shared between the panels for this session, just not across a reload
-  }
-}
+/**
+ * The composed snapshot. `useSyncExternalStore` compares snapshots by
+ * identity, so this must return the *same* object until one of the three
+ * parts actually changes — a fresh object per read would loop forever.
+ */
+let composed: CatalogueState = DEFAULT_STATE;
 
-function emit() {
-  for (const l of listeners) l();
+function compose(): CatalogueState {
+  const filters = filtersStore.get();
+  if (
+    composed.filters !== filters ||
+    composed.page !== page ||
+    composed.resetToken !== resetToken
+  ) {
+    composed = { filters, page, resetToken };
+  }
+  return composed;
 }
 
 function subscribe(cb: () => void): () => void {
-  hydrate();
-  listeners.add(cb);
-  return () => listeners.delete(cb);
-}
-
-function getSnapshot(): CatalogueState {
-  hydrate();
-  return state;
+  const unsubscribeFilters = filtersStore.subscribe(cb);
+  volatileListeners.add(cb);
+  return () => {
+    unsubscribeFilters();
+    volatileListeners.delete(cb);
+  };
 }
 
 function getServerSnapshot(): CatalogueState {
@@ -130,27 +139,26 @@ function getServerSnapshot(): CatalogueState {
 
 /** Non-reactive read (e.g. to build the detail page's "Back" link). */
 export function getCatalogueState(): CatalogueState {
-  hydrate();
-  return state;
+  return compose();
 }
 
 export function setCatalogueFilters(filters: FilterValue): void {
-  state = { ...state, filters };
-  persist(filters);
-  emit();
+  filtersStore.set(filters);
 }
 
-export function setCataloguePage(page: number): void {
-  if (page === state.page) return;
-  state = { ...state, page };
-  emit();
+export function setCataloguePage(next: number): void {
+  if (next === page) return;
+  page = next;
+  emitVolatile();
 }
 
 /** Clear every axis and go back to page 1 — the panel's "Clear All" link. */
 export function clearFilters(): void {
-  state = { filters: DEFAULT_FILTERS, page: 1, resetToken: state.resetToken + 1 };
-  persist(DEFAULT_FILTERS);
-  emit();
+  page = DEFAULT_STATE.page;
+  resetToken += 1;
+  // Last, and alone: its listeners are the same callbacks, so this single
+  // notification already carries the page and token reset above.
+  filtersStore.set(DEFAULT_FILTERS);
 }
 
 /** How many axes currently narrow the list. Drives the sheet's badge and the
@@ -162,6 +170,7 @@ export function countActiveFilters(v: FilterValue): number {
     v.portfolios.length +
     v.businessCriticalities.length +
     v.businessCapabilityIds.length +
+    v.dataObjectIds.length +
     (v.search ? 1 : 0) +
     (v.operator ? 1 : 0) +
     (v.photo !== "all" ? 1 : 0)
@@ -169,5 +178,5 @@ export function countActiveFilters(v: FilterValue): number {
 }
 
 export function useCatalogueFilters(): CatalogueState {
-  return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+  return useSyncExternalStore(subscribe, compose, getServerSnapshot);
 }

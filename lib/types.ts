@@ -93,22 +93,34 @@ export type BusinessCapability = {
  * the flat `relToParent` crawl (`lib/businessCapabilities.ts`). Distinct from
  * `BusinessCapability` above, which is the *link* carried by an application
  * and knows nothing of the tree. */
-export type BusinessCapabilityTreeNode = {
+export type HierarchyTreeNode = {
   id: string;
   name: string;
   externalId: string | null;
+  /** Shown as a tooltip on the node's label. Only the Data Object crawl
+   * requests it; the Business Capability one does not. */
+  description?: string | null;
   /** `null` for a root — including a node whose parent is missing from the
    * crawl, which is promoted to a root rather than dropped. */
   parentId: string | null;
-  children: BusinessCapabilityTreeNode[];
+  children: HierarchyTreeNode[];
 };
 
 /** The hierarchy as consumed by the filter: the roots to render, plus a flat
  * index for subtree/descendant lookups without walking from the top. */
-export type BusinessCapabilityTree = {
-  roots: BusinessCapabilityTreeNode[];
-  byId: Map<string, BusinessCapabilityTreeNode>;
+export type HierarchyTree = {
+  roots: HierarchyTreeNode[];
+  byId: Map<string, HierarchyTreeNode>;
 };
+
+/** The Business Capability and Data Object hierarchies have the same shape and
+ * the same behaviour, and are served by the same generic modules
+ * (`lib/hierarchyTree.ts`, `components/HierarchyTreeFilter.tsx`). These aliases
+ * keep each axis nameable at its call sites. */
+export type BusinessCapabilityTreeNode = HierarchyTreeNode;
+export type BusinessCapabilityTree = HierarchyTree;
+export type DataObjectTreeNode = HierarchyTreeNode;
+export type DataObjectTree = HierarchyTree;
 
 export type Application = {
   id: string;

@@ -5,6 +5,7 @@ import CatalogueActions from "@/components/CatalogueActions";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import type { FilterValue } from "@/components/FilterBar";
 import { capabilityNames } from "@/lib/businessCapabilities";
+import { dataObjectNames } from "@/lib/dataObjects";
 import {
   SEED_CONFIRM_THRESHOLD,
   buildDiscoverSeedHref,
@@ -12,7 +13,7 @@ import {
 } from "@/lib/discoverSeed";
 import { downloadBlob, exportDateStamp } from "@/lib/downloadBlob";
 import { serializeFilters } from "@/lib/filterDescription";
-import type { Application, BusinessCapabilityTree } from "@/lib/types";
+import type { Application, BusinessCapabilityTree, DataObjectTree } from "@/lib/types";
 
 type Params = {
   /** The unfiltered list — only to tell "export everything" from "export a
@@ -22,6 +23,7 @@ type Params = {
   visible: Application[];
   filters: FilterValue;
   capabilityTree: BusinessCapabilityTree | null;
+  dataObjectTree: DataObjectTree | null;
 };
 
 type ApplicationActions = {
@@ -52,6 +54,7 @@ export function useApplicationActions({
   visible,
   filters,
   capabilityTree,
+  dataObjectTree,
 }: Params): ApplicationActions {
   const [isExporting, setIsExporting] = useState(false);
 
@@ -118,10 +121,10 @@ export function useApplicationActions({
       const blob = await pdf(
         CatalogueExport({
           applications: visible,
-          filtersDescription: serializeFilters(
-            filters,
-            capabilityNames(capabilityTree, filters.businessCapabilityIds),
-          ),
+          filtersDescription: serializeFilters(filters, {
+            capabilities: capabilityNames(capabilityTree, filters.businessCapabilityIds),
+            dataObjects: dataObjectNames(dataObjectTree, filters.dataObjectIds),
+          }),
           baseUrl: window.location.origin,
         }),
       ).toBlob();

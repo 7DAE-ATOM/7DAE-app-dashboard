@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useSWRConfig } from "swr";
 import { SWR_KEY_APPLICATIONS } from "@/lib/useApplications";
 import { SWR_KEY_BUSINESS_CAPABILITIES } from "@/lib/useBusinessCapabilityTree";
+import { SWR_KEY_DATA_OBJECTS } from "@/lib/useDataObjectTree";
 import RefreshIcon from "@/components/icons/RefreshIcon";
 
 /**
@@ -24,6 +25,7 @@ export default function RefreshButton() {
         // Otherwise a refresh would leave the catalogue's capability filter
         // sitting on a stale hierarchy.
         mutate(SWR_KEY_BUSINESS_CAPABILITIES),
+        mutate(SWR_KEY_DATA_OBJECTS),
       ]);
     } finally {
       setSpinning(false);

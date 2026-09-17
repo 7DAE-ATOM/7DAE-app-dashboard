@@ -1,6 +1,6 @@
 "use client";
 
-import { useSyncExternalStore } from "react";
+import { createPersistedStore } from "@/lib/createPersistedStore";
 
 /**
  * How the Discover canvas draws its links.
@@ -15,56 +15,23 @@ import { useSyncExternalStore } from "react";
  */
 export type DiscoverViewMode = "simple" | "complex";
 
-const STORAGE_KEY = "discover-view-mode";
-
 /** The model view stays the default: switching it would silently change what
  * every existing user sees on their next visit. */
 const DEFAULT_MODE: DiscoverViewMode = "complex";
 
-let state: DiscoverViewMode = DEFAULT_MODE;
-let hydrated = false;
-const listeners = new Set<() => void>();
-
-function hydrate(): void {
-  if (hydrated || typeof window === "undefined") return;
-  hydrated = true;
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (raw === "simple" || raw === "complex") state = raw;
-  } catch {
-    // Corrupt/unavailable storage — keep the default.
-  }
-}
-
-function emit(): void {
-  for (const listener of listeners) listener();
-}
-
-function subscribe(listener: () => void): () => void {
-  hydrate();
-  listeners.add(listener);
-  return () => listeners.delete(listener);
-}
-
-function getSnapshot(): DiscoverViewMode {
-  hydrate();
-  return state;
-}
-
-function getServerSnapshot(): DiscoverViewMode {
-  return DEFAULT_MODE;
-}
+const store = createPersistedStore<DiscoverViewMode>({
+  key: "discover-view-mode",
+  storage: "local",
+  defaultValue: DEFAULT_MODE,
+  parse: (raw) => (raw === "simple" || raw === "complex" ? raw : null),
+  // A scalar: no need to run it through JSON.
+  serialize: (mode) => mode,
+});
 
 export function setDiscoverViewMode(mode: DiscoverViewMode): void {
-  state = mode;
-  try {
-    window.localStorage.setItem(STORAGE_KEY, mode);
-  } catch {
-    // Quota/private mode — the switch still applies for this session.
-  }
-  emit();
+  store.set(mode);
 }
 
 export function useDiscoverViewMode(): DiscoverViewMode {
-  return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+  return store.useValue();
 }

@@ -3,10 +3,13 @@
 import { useMemo, useState } from "react";
 import clsx from "clsx";
 import ChevronIcon from "@/components/icons/ChevronIcon";
-import type { BusinessCapabilityTree, BusinessCapabilityTreeNode } from "@/lib/types";
+import type { HierarchyTree, HierarchyTreeNode } from "@/lib/types";
 
 type Props = {
-  tree: BusinessCapabilityTree;
+  tree: HierarchyTree;
+  /** Copy is the only thing that differs between axes. */
+  searchPlaceholder: string;
+  emptyLabel: string;
   /** Applications each node would bring in, given the *other* active filters
    * — computed by the caller, which is the only one that knows them. */
   counts: Map<string, number>;
@@ -20,7 +23,7 @@ type Props = {
  * walkable. Returns `null` when there is no query — meaning "no filtering",
  * which the renderer distinguishes from "an empty result". */
 function visibleNodeIds(
-  tree: BusinessCapabilityTree,
+  tree: HierarchyTree,
   query: string,
 ): Set<string> | null {
   const q = query.trim().toLowerCase();
@@ -40,7 +43,10 @@ function visibleNodeIds(
 }
 
 /**
- * The catalogue's Business Capabilities axis: a collapsible checkbox tree.
+ * A collapsible checkbox tree, shared by the catalogue's two hierarchical
+ * axes: Business Capabilities and Data Objects. Nothing here knows which one
+ * it is rendering — the tree, the counts and the copy all come from the
+ * caller.
  *
  * The flat `Toggle` used by every other axis can't carry indentation, a
  * disclosure chevron or a per-node count, so this is its own component — the
@@ -50,7 +56,14 @@ function visibleNodeIds(
  * filter value, so neither belongs in `FilterValue`. Collapsing everything on
  * a filter reset is handled by the caller remounting this component.
  */
-export default function CapabilityTreeFilter({ tree, counts, value, onChange }: Readonly<Props>) {
+export default function HierarchyTreeFilter({
+  tree,
+  searchPlaceholder,
+  emptyLabel,
+  counts,
+  value,
+  onChange,
+}: Readonly<Props>) {
   const [query, setQuery] = useState("");
   // Kept apart from the paths a search force-opens, so clearing the search
   // restores exactly what the user had opened.
@@ -72,7 +85,7 @@ export default function CapabilityTreeFilter({ tree, counts, value, onChange }: 
     onChange(checked.has(id) ? value.filter((v) => v !== id) : [...value, id]);
   };
 
-  const renderNode = (node: BusinessCapabilityTreeNode, depth: number) => {
+  const renderNode = (node: HierarchyTreeNode, depth: number) => {
     if (visible && !visible.has(node.id)) return null;
     const hasChildren = node.children.length > 0;
     // While searching, matching paths are open whatever the user had folded.
@@ -109,7 +122,12 @@ export default function CapabilityTreeFilter({ tree, counts, value, onChange }: 
               onChange={() => toggleChecked(node.id)}
               className="shrink-0 accent-[var(--color-accent)]"
             />
-            <span className="truncate text-xs text-fg" title={node.name}>
+            {/* The description, when the crawl carries one, is what tells two
+                similarly named nodes apart. */}
+            <span
+              className="truncate text-xs text-fg"
+              title={node.description?.trim() || node.name}
+            >
               {node.name}
             </span>
             <span className="ml-auto shrink-0 text-[11px] font-mono text-muted">{count}</span>
@@ -126,13 +144,13 @@ export default function CapabilityTreeFilter({ tree, counts, value, onChange }: 
     <div>
       <input
         type="search"
-        placeholder="Search capabilities…"
+        placeholder={searchPlaceholder}
         value={query}
         onChange={(e) => setQuery(e.target.value)}
         className="w-full px-2.5 py-1.5 mb-1.5 rounded-lg bg-surface-2 border border-border text-xs text-fg placeholder:text-muted focus:outline-none focus:border-accent"
       />
       {nothingMatches ? (
-        <div className="py-2 text-xs text-muted">No capability matches.</div>
+        <div className="py-2 text-xs text-muted">{emptyLabel}</div>
       ) : (
         <ul className="max-h-[320px] overflow-y-auto pr-1">
           {tree.roots.map((root) => renderNode(root, 0))}
