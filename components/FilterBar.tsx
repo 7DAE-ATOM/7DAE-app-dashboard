@@ -9,8 +9,8 @@ import type {
   DataObjectTree,
   PhotoFilter,
 } from "@/lib/types";
+import FilterSection from "@/components/FilterSection";
 import HierarchyTreeFilter from "@/components/HierarchyTreeFilter";
-import ChevronIcon from "@/components/icons/ChevronIcon";
 import { PORTFOLIO_NONE } from "@/lib/applications";
 import { countActiveFilters } from "@/lib/appFilters";
 import {
@@ -200,59 +200,19 @@ function BlockTitle({
   );
 }
 
-/** Level-2 chapter of the FILTERING block: a rounded card whose foldable
- * header carries the axis name, its active-value count and the triangle.
- *
- * The body is hidden with the native `hidden` attribute rather than dropped
- * from the tree, so folding a chapter keeps whatever local state its content
- * holds — notably the Business Capabilities tree's own expanded nodes. */
-function Section({
-  label,
-  count,
-  open,
-  onToggle,
-  children,
-}: {
-  label: string;
-  count: number;
-  open: boolean;
-  onToggle: () => void;
-  children: ReactNode;
-}) {
-  const bodyId = useId();
+/** Empties one axis, shown in that axis's section header only while it holds
+ * a selection — an always-visible link on an untouched axis would read as an
+ * action that does nothing. Distinct from the panel's "Clear All", which
+ * empties every axis at once. */
+function ClearAxisButton({ onClear }: { onClear: () => void }) {
   return (
-    <div className="rounded-card border border-border bg-surface p-4">
-      <button
-        type="button"
-        onClick={onToggle}
-        aria-expanded={open}
-        aria-controls={bodyId}
-        className={clsx(
-          "flex w-full items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-muted hover:text-accent",
-          // No gap under the header once the card is folded down to its title.
-          open && "mb-3",
-        )}
-      >
-        <span className="truncate">{label}</span>
-        <span className="ml-auto flex shrink-0 items-center gap-2">
-          {count > 0 && (
-            <span className="font-mono text-[11px] normal-case tracking-normal">
-              {count}
-            </span>
-          )}
-          {/* Points up while open, down while folded. */}
-          <ChevronIcon
-            className={clsx(
-              "transition-transform",
-              open ? "-rotate-90" : "rotate-90",
-            )}
-          />
-        </span>
-      </button>
-      <div id={bodyId} hidden={!open}>
-        {children}
-      </div>
-    </div>
+    <button
+      type="button"
+      onClick={onClear}
+      className="shrink-0 text-[10px] font-medium normal-case tracking-normal text-muted underline underline-offset-2 hover:text-accent"
+    >
+      Clear
+    </button>
   );
 }
 
@@ -342,7 +302,7 @@ export default function FilterBar({
             onChange={(e) => onChange({ ...value, search: e.target.value })}
             className="w-full px-3 py-2 rounded-lg bg-surface border border-border text-fg placeholder:text-muted focus:outline-none focus:border-accent"
           />
-          <Section
+          <FilterSection
             label="Photo"
             count={counts.photo}
             open={openSections.has("photo")}
@@ -379,8 +339,8 @@ export default function FilterBar({
                 {currentPhoto.label}
               </span>
             </div>
-          </Section>
-          <Section
+          </FilterSection>
+          <FilterSection
             label="Category"
             count={counts.category}
             open={openSections.has("category")}
@@ -396,8 +356,8 @@ export default function FilterBar({
               renderLabel={(c) => CATEGORY_LABELS[c]}
               cols={2}
             />
-          </Section>
-          <Section
+          </FilterSection>
+          <FilterSection
             label="Status"
             count={counts.status}
             open={openSections.has("status")}
@@ -413,8 +373,8 @@ export default function FilterBar({
               renderLabel={(s) => STATUS_LABELS[s]}
               cols={2}
             />
-          </Section>
-          <Section
+          </FilterSection>
+          <FilterSection
             label="Portfolio"
             count={counts.portfolio}
             open={openSections.has("portfolio")}
@@ -430,8 +390,8 @@ export default function FilterBar({
               renderLabel={(p) => (p === PORTFOLIO_NONE ? "None" : p)}
               cols={2}
             />
-          </Section>
-          <Section
+          </FilterSection>
+          <FilterSection
             label="Operator"
             count={counts.operator}
             open={openSections.has("operator")}
@@ -444,8 +404,8 @@ export default function FilterBar({
               onChange={(e) => onChange({ ...value, operator: e.target.value })}
               className="w-full px-3 py-2 rounded-lg bg-surface-2 border border-border text-fg placeholder:text-muted focus:outline-none focus:border-accent"
             />
-          </Section>
-          <Section
+          </FilterSection>
+          <FilterSection
             label="Business Criticality"
             count={counts.criticality}
             open={openSections.has("criticality")}
@@ -461,13 +421,20 @@ export default function FilterBar({
               renderLabel={(c) => BUSINESS_CRITICALITY_LABELS[c]}
               cols={2}
             />
-          </Section>
+          </FilterSection>
           {capabilityTree && (
-            <Section
+            <FilterSection
               label="Business Capabilities"
               count={counts.capabilities}
               open={openSections.has("capabilities")}
               onToggle={() => toggleFilterSection("capabilities")}
+              action={
+                value.businessCapabilityIds.length > 0 ? (
+                  <ClearAxisButton
+                    onClear={() => onChange({ ...value, businessCapabilityIds: [] })}
+                  />
+                ) : undefined
+              }
             >
               <HierarchyTreeFilter
                 key={capabilityResetToken}
@@ -480,14 +447,21 @@ export default function FilterBar({
                   onChange({ ...value, businessCapabilityIds: v })
                 }
               />
-            </Section>
+            </FilterSection>
           )}
           {dataObjectTree && (
-            <Section
+            <FilterSection
               label="Data Objects"
               count={counts.dataObjects}
               open={openSections.has("dataObjects")}
               onToggle={() => toggleFilterSection("dataObjects")}
+              action={
+                value.dataObjectIds.length > 0 ? (
+                  <ClearAxisButton
+                    onClear={() => onChange({ ...value, dataObjectIds: [] })}
+                  />
+                ) : undefined
+              }
             >
               <HierarchyTreeFilter
                 key={capabilityResetToken}
@@ -498,7 +472,7 @@ export default function FilterBar({
                 value={value.dataObjectIds}
                 onChange={(v) => onChange({ ...value, dataObjectIds: v })}
               />
-            </Section>
+            </FilterSection>
           )}
         </div>
       </section>

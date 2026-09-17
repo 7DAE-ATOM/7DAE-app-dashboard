@@ -12,6 +12,7 @@ import DiscoverDisplaySettings from "@/components/discover/DiscoverDisplaySettin
 import DiscoverExportMenu from "@/components/discover/DiscoverExportMenu";
 import DiscoverViewModeToggle from "@/components/discover/DiscoverViewModeToggle";
 import DiscoverInfoIconsToggle from "@/components/discover/DiscoverInfoIconsToggle";
+import DiscoverHighlightPanel from "@/components/discover/DiscoverHighlightPanel";
 import type { DiscoverGraphHandle } from "@/components/discover/DiscoverGraph";
 import { toMermaid } from "@/lib/discoverMermaid";
 import { downloadBlob, exportDateStamp } from "@/lib/downloadBlob";
@@ -160,6 +161,13 @@ export default function DiscoverClient() {
               resolveApplication={resolveApplication}
               seed={seedNodes}
               onApplicationHidden={handleHidden}
+            />
+            {/* Reads the canvas through `lib/discoverCanvasContents.ts` and
+                pushes its selection through `graphRef` — no state of its own
+                up here, so ticking a box never re-renders the graph. */}
+            <DiscoverHighlightPanel
+              graphRef={graphRef}
+              applicationsById={applicationsById}
             />
             {/* top-14: below the graph's own seed loading/error strip. */}
             {seedExpired && !expiredDismissed && (

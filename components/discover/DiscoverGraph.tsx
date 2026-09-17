@@ -56,6 +56,17 @@ import type { DiscoverGraphSnapshot } from "@/lib/discoverMermaid";
 import { useDiscoverViewMode } from "@/lib/discoverViewMode";
 import { useDiscoverDisplaySettings } from "@/lib/discoverDisplaySettings";
 import { pruneEdgeCurvature } from "@/lib/discoverEdgeCurvature";
+import {
+  applicationMatches,
+  matchesAxis,
+  type AxisHighlightSelection,
+} from "@/lib/discoverHighlight";
+import {
+  publishCanvasContents,
+  resetCanvasContents,
+  type CanvasContents,
+  type CanvasInterface,
+} from "@/lib/discoverCanvasContents";
 
 const nodeTypes = { application: ApplicationNodeComponent, interface: InterfaceNodeComponent };
 const edgeTypes = { graphEdge: GraphEdge };
@@ -67,6 +78,11 @@ export type DiscoverGraphHandle = {
    * lives here, so an exporter has no other way to reach it. Read-only: it
    * moves, refits and selects nothing. */
   snapshot: () => DiscoverGraphSnapshot;
+  /** Push the highlight panel's selection, `null` to drop it. Imperative on
+   * purpose: painting classes must not cost a React render of the graph.
+   * Returns nothing — a match count would go stale the moment a node is added
+   * or hidden, and the panel computes its own from the published canvas. */
+  setAxisHighlight: (selection: AxisHighlightSelection | null) => void;
 };
 
 type Props = {
@@ -137,6 +153,24 @@ function collapseToApplications(
     result.push({ sourceId: e.consumerId, targetId });
   }
   return result;
+}
+
+/**
+ * The DOM id of the edge drawn for `e` — not the same in both views. The
+ * complex view draws one edge per relation (`e.id`); the simplified one folds
+ * them into `consumer -> provider` (see the `edges` memo, which is the only
+ * other place that spells this out). `null` when nothing is drawn at all,
+ * which is the self-consumption case `collapseToApplications` skips.
+ */
+function edgeDomId(
+  e: DiscoverEdge,
+  simplified: boolean,
+  providerOf: (interfaceId: string) => string | undefined,
+): string | null {
+  if (!simplified) return e.id;
+  const providerId = providerOf(e.interfaceId);
+  if (!providerId || providerId === e.consumerId) return null;
+  return `${e.consumerId}->${providerId}`;
 }
 
 function boxesOf(nodes: Node[]) {
@@ -877,12 +911,6 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
     };
   }, [simplified]);
 
-  useImperativeHandle(ref, () => ({ addApplication, removeApplication, snapshot }), [
-    addApplication,
-    removeApplication,
-    snapshot,
-  ]);
-
   /** What xyflow renders. `nodes` stays the full set: geometry and edges are
    * derived from it, and folding links needs the interfaces the simplified
    * view doesn't draw. Dropping child nodes while keeping their parent is
@@ -977,6 +1005,30 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
     }
     return result;
   }, [nodes, edgeMeta, simplified]);
+
+  // Mirrors of what is actually drawn, for the highlight callbacks below:
+  // they must stay reference-stable (they are wired to xyflow handlers and to
+  // the imperative handle), so they read refs rather than close over state.
+  const visibleNodesRef = useRef(visibleNodes);
+  visibleNodesRef.current = visibleNodes;
+  const simplifiedRef = useRef(simplified);
+  simplifiedRef.current = simplified;
+
+  /**
+   * Which elements are on the canvas — deliberately *not* where they are.
+   *
+   * `onNodesChange` rewrites `nodes` on every frame of a drag, so an effect
+   * keyed on `nodes` would sweep the whole DOM per frame. Keyed on this
+   * signature it only runs when something appeared or disappeared, which is
+   * also exactly when the highlight and the counters need to be recomputed.
+   */
+  const membershipKey = useMemo(
+    () =>
+      `${simplified}|${visibleNodes.map((n) => n.id).join(",")}|${edges
+        .map((e) => e.id)
+        .join(",")}`,
+    [visibleNodes, edges, simplified],
+  );
 
   /** For an Application: `shown` is the number of distinct consumer apps
    * already displayed on the graph (an edge is drawn to them from one of
@@ -1173,67 +1225,207 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
    * - an Application: itself, every currently-visible interface it's
    *   attached to (as provider or consumer), the consumers of the
    *   interfaces it provides, the providers of the interfaces it consumes,
-   *   and every edge among those. */
+   *   and every edge among those.
+   *
+   * Two sources now write these classes — this click, and the highlight
+   * panel's selection — so they share a single owner, `renderHighlight`
+   * below. Anything that paints outside it will be erased by the next
+   * repaint. */
   const highlightedNodeIdRef = useRef<string | null>(null);
+  /** The highlight panel's selection, pushed through `setAxisHighlight`. */
+  const axisSelectionRef = useRef<AxisHighlightSelection | null>(null);
 
-  const clearHighlight = useCallback(() => {
-    containerRef.current
-      ?.querySelectorAll(".rf-dim, .rf-emph")
-      .forEach((el) => el.classList.remove("rf-dim", "rf-emph"));
-    highlightedNodeIdRef.current = null;
+  /** Nodes by id, plus the provider lookup resolved the same way the `edges`
+   * memo does it (`byId.get(id)?.parentId`) rather than through
+   * `interfaceProviderRef`: the two can disagree, and what matters here is
+   * matching the ids xyflow actually put in the DOM. Built once per repaint —
+   * a linear scan per edge would be quadratic on a large canvas. */
+  const readNodes = useCallback(() => {
+    const byId = new Map(nodesRef.current.map((n) => [n.id, n]));
+    const providerOf = (interfaceId: string) =>
+      (byId.get(interfaceId)?.parentId ??
+        interfaceProviderRef.current.get(interfaceId)) as string | undefined;
+    return { byId, providerOf };
   }, []);
 
-  const applyHighlight = useCallback((nodeId: string) => {
+  /** What a click pins: the node itself and its immediate neighbourhood —
+   * see the doc block above for the exact rule per node type. */
+  const computeClickSets = useCallback(
+    (nodeId: string) => {
+      const nodeIds = new Set<string>([nodeId]);
+      const edgeIds = new Set<string>();
+      const simplified = simplifiedRef.current;
+      const { byId, providerOf } = readNodes();
+      const addEdge = (e: DiscoverEdge) => {
+        const domId = edgeDomId(e, simplified, providerOf);
+        if (domId) edgeIds.add(domId);
+      };
+
+      const node = byId.get(nodeId);
+      if (node?.type === "interface") {
+        const provider = interfaceProviderRef.current.get(nodeId);
+        if (provider) nodeIds.add(provider);
+        for (const e of edgeMetaRef.current) {
+          if (e.interfaceId === nodeId) {
+            nodeIds.add(e.consumerId);
+            addEdge(e);
+          }
+        }
+      } else {
+        const ownedInterfaceIds = new Set(
+          [...interfaceProviderRef.current.entries()]
+            .filter(([, providerId]) => providerId === nodeId)
+            .map(([ifaceId]) => ifaceId),
+        );
+        for (const ifaceId of ownedInterfaceIds) nodeIds.add(ifaceId);
+        for (const e of edgeMetaRef.current) {
+          if (ownedInterfaceIds.has(e.interfaceId)) {
+            // An interface this app provides: highlight its consumers too.
+            nodeIds.add(e.consumerId);
+            addEdge(e);
+          }
+          if (e.consumerId === nodeId) {
+            // An interface this app consumes: highlight it and its provider.
+            nodeIds.add(e.interfaceId);
+            const provider = interfaceProviderRef.current.get(e.interfaceId);
+            if (provider) nodeIds.add(provider);
+            addEdge(e);
+          }
+        }
+      }
+      return { nodeIds, edgeIds };
+    },
+    [readNodes],
+  );
+
+  /**
+   * What the panel's selection lights: strictly what the model links to a
+   * ticked value, plus the flows that reach a lit interface. Nothing is added
+   * by neighbourhood — an application consuming an interface that carries a
+   * ticked data object stays dimmed unless it declares that data object
+   * itself. That gap is the model's, and the canvas shows it as such.
+   */
+  const computeAxisSets = useCallback(
+    (selection: AxisHighlightSelection) => {
+      const { dataObjects, capabilities, join } = selection;
+      const nodeIds = new Set<string>();
+      const edgeIds = new Set<string>();
+      const { byId, providerOf } = readNodes();
+
+      for (const node of visibleNodesRef.current) {
+        if (node.type === "interface") {
+          // Only the Data Object axis applies to a flow: an interface carries
+          // no business capability, so a capability selection never lights one.
+          const data = node.data as unknown as InterfaceNodeData;
+          const own = new Set((data.dataObjects ?? []).map((o) => o.id));
+          if (matchesAxis(own, dataObjects, join)) nodeIds.add(node.id);
+          continue;
+        }
+        // An application the catalogue doesn't know (revealed by an Interface
+        // query) has neither axis, so it can never be lit.
+        const app = resolveApplication(node.id);
+        if (!app) continue;
+        const lit = applicationMatches(
+          app.dataObjects.map((o) => o.id),
+          app.businessCapabilities.map((c) => c.id),
+          selection,
+        );
+        if (lit) nodeIds.add(node.id);
+      }
+
+      const simplified = simplifiedRef.current;
+      for (const e of edgeMetaRef.current) {
+        const domId = edgeDomId(e, simplified, providerOf);
+        if (!domId) continue;
+        // The flow is lit by the interface it carries, never by its endpoints:
+        // the arrow is what shows the data moving, even between two
+        // applications that don't declare it.
+        if (simplified) {
+          const iface = byId.get(e.interfaceId);
+          const data = iface?.data as unknown as InterfaceNodeData | undefined;
+          const own = new Set((data?.dataObjects ?? []).map((o) => o.id));
+          if (matchesAxis(own, dataObjects, join)) edgeIds.add(domId);
+        } else if (nodeIds.has(e.interfaceId)) {
+          edgeIds.add(domId);
+        }
+      }
+
+      return { nodeIds, edgeIds };
+    },
+    [readNodes, resolveApplication],
+  );
+
+  /**
+   * The one place that writes `.rf-dim` / `.rf-emph`. A pinned click wins
+   * while it lasts — it is a deliberate, transient gesture — and dropping it
+   * hands the canvas back to the panel's highlight instead of relighting
+   * everything.
+   */
+  const renderHighlight = useCallback(() => {
     const root = containerRef.current;
     if (!root) return;
-    const connected = new Set<string>([nodeId]);
-    const emphasizedEdgeIds = new Set<string>();
 
-    const node = nodesRef.current.find((n) => n.id === nodeId);
-    if (node?.type === "interface") {
-      const provider = interfaceProviderRef.current.get(nodeId);
-      if (provider) connected.add(provider);
-      for (const e of edgeMetaRef.current) {
-        if (e.interfaceId === nodeId) {
-          connected.add(e.consumerId);
-          emphasizedEdgeIds.add(e.id);
-        }
-      }
-    } else {
-      const ownedInterfaceIds = new Set(
-        [...interfaceProviderRef.current.entries()]
-          .filter(([, providerId]) => providerId === nodeId)
-          .map(([ifaceId]) => ifaceId),
-      );
-      for (const ifaceId of ownedInterfaceIds) connected.add(ifaceId);
-      for (const e of edgeMetaRef.current) {
-        if (ownedInterfaceIds.has(e.interfaceId)) {
-          // An interface this app provides: highlight its consumers too.
-          connected.add(e.consumerId);
-          emphasizedEdgeIds.add(e.id);
-        }
-        if (e.consumerId === nodeId) {
-          // An interface this app consumes: highlight it and its provider.
-          connected.add(e.interfaceId);
-          const provider = interfaceProviderRef.current.get(e.interfaceId);
-          if (provider) connected.add(provider);
-          emphasizedEdgeIds.add(e.id);
-        }
-      }
+    // A pin whose node has left the canvas — hidden, pruned, or an interface
+    // the simplified view stopped drawing — would keep the panel's highlight
+    // out forever, since it can no longer be clicked again.
+    const pinned = highlightedNodeIdRef.current;
+    if (pinned && !visibleNodesRef.current.some((n) => n.id === pinned)) {
+      highlightedNodeIdRef.current = null;
+    }
+
+    const sets = highlightedNodeIdRef.current
+      ? computeClickSets(highlightedNodeIdRef.current)
+      : axisSelectionRef.current
+        ? computeAxisSets(axisSelectionRef.current)
+        : null;
+
+    if (!sets) {
+      root
+        .querySelectorAll(".rf-dim, .rf-emph")
+        .forEach((el) => el.classList.remove("rf-dim", "rf-emph"));
+      return;
     }
 
     root.querySelectorAll<HTMLElement>(".react-flow__node").forEach((el) => {
       const id = el.dataset.id;
-      el.classList.toggle("rf-dim", !!id && !connected.has(id));
+      el.classList.toggle("rf-dim", !!id && !sets.nodeIds.has(id));
     });
     root.querySelectorAll<SVGElement>(".react-flow__edge").forEach((el) => {
       const id = el.dataset.id;
-      const isEmphasized = !!id && emphasizedEdgeIds.has(id);
+      const isEmphasized = !!id && sets.edgeIds.has(id);
       el.classList.toggle("rf-dim", !isEmphasized);
       el.classList.toggle("rf-emph", isEmphasized);
     });
-    highlightedNodeIdRef.current = nodeId;
-  }, []);
+  }, [computeAxisSets, computeClickSets]);
+
+  const setAxisHighlight = useCallback(
+    (selection: AxisHighlightSelection | null) => {
+      axisSelectionRef.current = selection;
+      renderHighlight();
+    },
+    [renderHighlight],
+  );
+
+  /**
+   * Repaint whenever the canvas gains or loses an element.
+   *
+   * Deferred by one frame on purpose: xyflow does not render from the `nodes`
+   * prop, it copies it into its own store from an effect of its own
+   * (`StoreUpdater`), so a node added in this commit is *not* in the DOM yet
+   * when this effect runs. Same reason the two `fitView` calls in the seed
+   * effect are wrapped in a frame.
+   */
+  useEffect(() => {
+    const frame = requestAnimationFrame(renderHighlight);
+    return () => cancelAnimationFrame(frame);
+  }, [membershipKey, renderHighlight]);
+
+  /** xyflow rewrites a node's `className` when `dragging` flips, which wipes
+   * whatever we put there. Repainting on drop is what keeps a dimmed
+   * rectangle dimmed after the user has moved it. */
+  const handleNodeDragStop = useCallback(() => {
+    renderHighlight();
+  }, [renderHighlight]);
 
   const handleNodeClick = useCallback(
     (_: unknown, node: Node) => {
@@ -1242,19 +1434,70 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
       // click on the rectangle/circle itself — closing an open info card is
       // correct in every such case ("click elsewhere", decision).
       closeApplicationInfo();
-      if (highlightedNodeIdRef.current === node.id) {
-        clearHighlight();
-      } else {
-        applyHighlight(node.id);
-      }
+      highlightedNodeIdRef.current =
+        highlightedNodeIdRef.current === node.id ? null : node.id;
+      renderHighlight();
     },
-    [applyHighlight, clearHighlight, closeApplicationInfo],
+    [closeApplicationInfo, renderHighlight],
   );
 
   const handlePaneClick = useCallback(() => {
-    clearHighlight();
+    highlightedNodeIdRef.current = null;
+    renderHighlight();
     closeApplicationInfo();
-  }, [clearHighlight, closeApplicationInfo]);
+  }, [closeApplicationInfo, renderHighlight]);
+
+  /**
+   * What the canvas holds, for the highlight panel's counters.
+   *
+   * Keyed on `nodes` identity rather than on `membershipKey`, because an
+   * interface's `dataObjects` are filled in *after* the circle appears
+   * (`placeProviderInterfaces`) — a change the membership signature cannot
+   * see. The payload is rebuilt per frame during a drag, but the signature
+   * below is what decides whether anyone is told about it.
+   */
+  const canvasContents = useMemo<CanvasContents>(() => {
+    const applicationIds: string[] = [];
+    const interfaces: CanvasInterface[] = [];
+    for (const node of nodes) {
+      if (node.type === "application") {
+        applicationIds.push(node.id);
+      } else if (node.type === "interface") {
+        const data = node.data as unknown as InterfaceNodeData;
+        interfaces.push({
+          id: node.id,
+          dataObjectIds: (data.dataObjects ?? []).map((o) => o.id),
+        });
+      }
+    }
+    return { applicationIds, interfaces };
+  }, [nodes]);
+
+  const contentsKey = useMemo(
+    () =>
+      `${canvasContents.applicationIds.join(",")}|${canvasContents.interfaces
+        .map((i) => `${i.id}:${i.dataObjectIds.join("+")}`)
+        .join(",")}`,
+    [canvasContents],
+  );
+  const canvasContentsRef = useRef(canvasContents);
+  canvasContentsRef.current = canvasContents;
+
+  useEffect(() => {
+    publishCanvasContents(canvasContentsRef.current);
+  }, [contentsKey]);
+
+  // A canvas must not outlive its graph — and StrictMode's double mount would
+  // otherwise leave the first pass's content published.
+  useEffect(() => resetCanvasContents, []);
+
+  // Declared here, after `setAxisHighlight` exists: the handle is assembled
+  // from callbacks defined throughout this component.
+  useImperativeHandle(
+    ref,
+    () => ({ addApplication, removeApplication, snapshot, setAxisHighlight }),
+    [addApplication, removeApplication, snapshot, setAxisHighlight],
+  );
 
   return (
     <ApplicationInfoContext.Provider value={applicationInfoValue}>
@@ -1279,11 +1522,14 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
           }}
           onNodesChange={onNodesChange}
           onNodeClick={handleNodeClick}
+          onNodeDragStop={handleNodeDragStop}
           onPaneClick={handlePaneClick}
           onNodeContextMenu={onNodeContextMenu}
         >
           <Background />
-          <Controls showInteractive={false} />
+          {/* Bottom-right: the highlight panel and its folded tab own the
+              left edge, and the default bottom-left would sit under them. */}
+          <Controls showInteractive={false} position="bottom-right" />
         </ReactFlow>
         {seeding && (
           <div className="pointer-events-none absolute left-1/2 top-3 z-10 -translate-x-1/2 rounded-full border border-border bg-surface px-3 py-1.5 text-xs font-mono text-muted shadow-lg">
