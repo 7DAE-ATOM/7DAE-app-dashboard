@@ -30,6 +30,7 @@ import {
   type InterfaceNode as InterfaceFactSheet,
 } from "@/lib/atom-api";
 import {
+  toDiagramRelations,
   toInboundInterfaces,
   toInternalRelations,
   toOutboundInterfacesAndProviders,
@@ -53,9 +54,16 @@ import NodeContextMenu, { type DiscoverContextMenuTarget } from "./NodeContextMe
 import { ApplicationInfoContext } from "./ApplicationInfoContext";
 import type { Application } from "@/lib/types";
 import type { DiscoverGraphSnapshot } from "@/lib/discoverMermaid";
+import { boundsOf, captureViewport, overlayBoxes } from "@/lib/discoverImageExport";
 import { useDiscoverViewMode } from "@/lib/discoverViewMode";
 import { useDiscoverDisplaySettings } from "@/lib/discoverDisplaySettings";
-import { pruneEdgeCurvature } from "@/lib/discoverEdgeCurvature";
+import {
+  getAllEdgeCurvatures,
+  pruneEdgeCurvature,
+  setEdgeCurvatures,
+  subscribeEdgeCurvatureChange,
+} from "@/lib/discoverEdgeCurvature";
+import type { DiscoverDiagramSave } from "@/lib/discoverDiagramSaves";
 import {
   applicationMatches,
   matchesAxis,
@@ -78,11 +86,21 @@ export type DiscoverGraphHandle = {
    * lives here, so an exporter has no other way to reach it. Read-only: it
    * moves, refits and selects nothing. */
   snapshot: () => DiscoverGraphSnapshot;
+  /** The diagram as a save holds it: ids and layout, nothing from the
+   * repository. Distinct from `snapshot()` on purpose — that one serves the
+   * exports, follows the view mode and **drops the whole interface layer in
+   * the simplified view**, so a diagram saved through it would come back
+   * gutted. This one reads the refs and ignores the mode. `null` when the
+   * canvas is empty. */
+  getDiagram: () => DiscoverDiagramContent | null;
   /** Push the highlight panel's selection, `null` to drop it. Imperative on
    * purpose: painting classes must not cost a React render of the graph.
    * Returns nothing — a match count would go stale the moment a node is added
    * or hidden, and the panel computes its own from the published canvas. */
   setAxisHighlight: (selection: AxisHighlightSelection | null) => void;
+  /** Renders the canvas to an image. Read-only like `snapshot`: the capture
+   * works on a clone, so the on-screen zoom and pan are untouched. */
+  exportImage: (format: "png" | "svg") => Promise<Blob>;
 };
 
 type Props = {
@@ -99,6 +117,30 @@ type Props = {
    * chip, so the toolbar bar drops it too — the graph has already removed
    * the node itself, this is only the parent's mirror of the selection. */
   onApplicationHidden?: (id: string) => void;
+  /** A diagram to draw, with its applications already resolved against the
+   * catalogue by the parent. Owned by the parent (which owns the Save/Load
+   * UI) and handed over as a prop rather than through the imperative handle,
+   * for the same reason as `seed`: applying it needs a fetch, and the parent
+   * must be able to report the outcome. */
+  pendingLoad?: PendingDiagramLoad | null;
+  /** The load is over: `null` on success, a message otherwise. The parent
+   * clears `pendingLoad` and settles the active-save state on this. */
+  onLoadSettled?: (error: string | null) => void;
+  /** The diagram drifted from the state that was last saved. Only ever
+   * reports the dirty direction — the parent owns the way back to clean
+   * (a save, a load, a selection change). */
+  onDirty?: () => void;
+};
+
+/** What `getDiagram` yields and `pendingLoad` carries: the save's payload
+ * minus its envelope (`version`, `savedAt`), which is the storage layer's. */
+export type DiscoverDiagramContent = Omit<DiscoverDiagramSave, "version" | "savedAt">;
+
+export type PendingDiagramLoad = {
+  content: DiscoverDiagramContent;
+  /** Resolved by the parent from the catalogue — ids that no longer resolve
+   * are already dropped here, so the graph never has to know about it. */
+  applications: DiscoverApplicationNode[];
 };
 
 function boxSizeOf(node: Node): { width: number; height: number } {
@@ -220,7 +262,15 @@ function mergeInterfaceFactSheet(
  * node at the origin) or through the batch `seed` effect below, which lays
  * out a whole catalogue selection in one pass. Never again afterward. */
 const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGraph(
-  { resolveManagerName, resolveApplication, seed, onApplicationHidden },
+  {
+    resolveManagerName,
+    resolveApplication,
+    seed,
+    onApplicationHidden,
+    pendingLoad,
+    onLoadSettled,
+    onDirty,
+  },
   ref,
 ) {
   // Drawing mode only: `nodes`/`edgeMeta` below are identical in both, so
@@ -232,12 +282,16 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
   const [seedError, setSeedError] = useState<string | null>(null);
   const [seeding, setSeeding] = useState(false);
   const [contextMenu, setContextMenu] = useState<DiscoverContextMenuTarget | null>(null);
-  // One piece of state for both kinds of identity card, which is what makes
-  // them mutually exclusive for free: opening an interface's card closes an
-  // application's, and vice versa.
-  const [openInfo, setOpenInfo] = useState<
-    { kind: "application" | "interface"; id: string } | null
-  >(null);
+  // Identity cards are **pinned**: as many as the user opens stay open, and
+  // only their own cross closes them. Hence one set per kind rather than a
+  // single piece of state — comparing several nodes side by side is the whole
+  // point of opening more than one.
+  const [openApplicationIds, setOpenApplicationIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const [openInterfaceIds, setOpenInterfaceIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
   const { showInfoIcons } = useDiscoverDisplaySettings();
   const containerRef = useRef<HTMLDivElement>(null);
   /** Captured via `onInit` instead of `useReactFlow()` so the component
@@ -245,58 +299,77 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
    * view after the batch seed lands (the `fitView` prop is mount-only). */
   const flowRef = useRef<ReactFlowInstance | null>(null);
 
-  const closeApplicationInfo = useCallback(() => setOpenInfo(null), []);
+  const closeAllInfo = useCallback(() => {
+    setOpenApplicationIds((current) => (current.size === 0 ? current : new Set()));
+    setOpenInterfaceIds((current) => (current.size === 0 ? current : new Set()));
+  }, []);
+
+  /** Add/remove one id, keeping the reference stable when nothing changes so
+   * the context value doesn't churn. */
+  function toggleIn(current: ReadonlySet<string>, id: string): ReadonlySet<string> {
+    const next = new Set(current);
+    if (!next.delete(id)) next.add(id);
+    return next;
+  }
+
   const toggleApplicationInfo = useCallback(
-    (id: string) =>
-      setOpenInfo((current) =>
-        current?.kind === "application" && current.id === id
-          ? null
-          : { kind: "application", id },
-      ),
+    (id: string) => setOpenApplicationIds((current) => toggleIn(current, id)),
     [],
   );
   const toggleInterfaceInfo = useCallback(
-    (id: string) =>
-      setOpenInfo((current) =>
-        current?.kind === "interface" && current.id === id
-          ? null
-          : { kind: "interface", id },
-      ),
+    (id: string) => setOpenInterfaceIds((current) => toggleIn(current, id)),
     [],
   );
+  const closeApplicationCard = useCallback((id: string) => {
+    setOpenApplicationIds((current) =>
+      current.has(id) ? toggleIn(current, id) : current,
+    );
+  }, []);
+  const closeInterfaceCard = useCallback((id: string) => {
+    setOpenInterfaceIds((current) => (current.has(id) ? toggleIn(current, id) : current));
+  }, []);
+
   const applicationInfoValue = useMemo(
     () => ({
-      openApplicationId: openInfo?.kind === "application" ? openInfo.id : null,
-      openInterfaceId: openInfo?.kind === "interface" ? openInfo.id : null,
+      openApplicationIds,
+      openInterfaceIds,
       toggle: toggleApplicationInfo,
       toggleInterface: toggleInterfaceInfo,
-      close: closeApplicationInfo,
+      closeApplication: closeApplicationCard,
+      closeInterface: closeInterfaceCard,
       resolveApplication,
     }),
     [
-      openInfo,
+      openApplicationIds,
+      openInterfaceIds,
       toggleApplicationInfo,
       toggleInterfaceInfo,
-      closeApplicationInfo,
+      closeApplicationCard,
+      closeInterfaceCard,
       resolveApplication,
     ],
   );
 
+  const anyInfoOpen = openApplicationIds.size > 0 || openInterfaceIds.size > 0;
+
+  /** Escape stays the one bulk dismissal. A card is otherwise closed only by
+   * its own cross — clicking the canvas, a node, or another info icon leaves
+   * every open card exactly where it is. */
   useEffect(() => {
-    if (!openInfo) return;
+    if (!anyInfoOpen) return;
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") closeApplicationInfo();
+      if (e.key === "Escape") closeAllInfo();
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [openInfo, closeApplicationInfo]);
+  }, [anyInfoOpen, closeAllInfo]);
 
   // Hiding the info icons disables the feature, it doesn't merely hide it: the
-  // nodes stop rendering the card on their own, but without this the id would
-  // linger and the card would pop back the moment the icons return.
+  // nodes stop rendering the cards on their own, but without this the ids would
+  // linger and the cards would pop back the moment the icons return.
   useEffect(() => {
-    if (!showInfoIcons) closeApplicationInfo();
-  }, [showInfoIcons, closeApplicationInfo]);
+    if (!showInfoIcons) closeAllInfo();
+  }, [showInfoIcons, closeAllInfo]);
 
   const nodesRef = useRef(nodes);
   nodesRef.current = nodes;
@@ -316,6 +389,20 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
   const interfaceSlotRef = useRef<Map<string, number>>(new Map());
   const appInterfacesCache = useRef<Map<string, ApplicationInterfacesNode>>(new Map());
   const interfaceFactSheetCache = useRef<Map<string, InterfaceFactSheet>>(new Map());
+
+  /** Both async writers of the whole canvas — the batch seed and a diagram
+   * load — commit with *replacing* updaters. Whichever was requested last
+   * must win, or a seed resolving after a load would silently overwrite it
+   * (and leak its roots into `rootIdsRef`, which it fills additively). Each
+   * takes a generation on entry and drops its results if the number moved. */
+  const contentGenRef = useRef(0);
+  /** Set as soon as a load is requested: the seed is the catalogue's opening
+   * proposal, and an explicitly loaded diagram outranks it for good. */
+  const loadRequestedRef = useRef(false);
+  /** Distinguishes a programmatic reset (initial layout, load) from a user
+   * edit, for the parent's "unsaved changes" indicator. Same device as
+   * `/depgraph`'s `DependencyGraph`. */
+  const isBaselineUpdateRef = useRef(false);
 
   const cacheInterfaceFactSheet = useCallback((fs: InterfaceFactSheet) => {
     interfaceFactSheetCache.current.set(
@@ -565,10 +652,15 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
   const seededRef = useRef<string | null>(null);
   useEffect(() => {
     if (!seed || seed.length === 0) return;
+    // An explicitly loaded diagram outranks the catalogue's opening proposal,
+    // permanently: re-seeding over it would be a second, unasked-for reset.
+    if (loadRequestedRef.current) return;
     const ids = seed.map((app) => app.id);
     const signature = ids.join(",");
     if (seededRef.current === signature) return;
     seededRef.current = signature;
+    const generation = ++contentGenRef.current;
+    const superseded = () => contentGenRef.current !== generation;
     let cancelled = false;
     let committed = false;
 
@@ -612,9 +704,10 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
             target: providerOf.get(e.interfaceId) ?? e.consumerId,
           })),
         );
-        if (cancelled) return;
+        if (cancelled || superseded()) return;
 
         for (const id of ids) rootIdsRef.current.add(id);
+        isBaselineUpdateRef.current = true;
         setNodes(() => {
           let next = seed.map((app) =>
             makeApplicationNode(app, positions.get(app.id) ?? { x: 0, y: 0 }, true),
@@ -629,22 +722,24 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
         // `fitView` as a prop only runs at mount, before the seed lands.
         requestAnimationFrame(() => flowRef.current?.fitView({ maxZoom: 1 }));
       } catch (e) {
-        if (cancelled) return;
+        if (cancelled || superseded()) return;
         setSeedError(e instanceof Error ? e.message : String(e));
         // The rectangles still belong on screen — only their relations
         // failed to load; fall back to the edgeless packing.
         const packed = await layoutRootApplications(ids).catch(
           () => new Map<string, { x: number; y: number }>(),
         );
-        if (cancelled) return;
+        if (cancelled || superseded()) return;
         for (const id of ids) rootIdsRef.current.add(id);
+        isBaselineUpdateRef.current = true;
         setNodes(
           seed.map((app) => makeApplicationNode(app, packed.get(app.id) ?? { x: 0, y: 0 }, true)),
         );
         committed = true;
         requestAnimationFrame(() => flowRef.current?.fitView({ maxZoom: 1 }));
       } finally {
-        if (!cancelled) setSeeding(false);
+        // `superseded()`: a load took over and owns the spinner now.
+        if (!cancelled && !superseded()) setSeeding(false);
       }
     };
 
@@ -654,6 +749,139 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
       if (!committed) seededRef.current = null;
     };
   }, [seed, makeApplicationNode, placeProviderInterfaces, cacheInterfaceFactSheet]);
+
+  /**
+   * Draws a saved diagram, replacing whatever is on the canvas.
+   *
+   * Mirrors the seed effect above — same fetch, same cache priming, same
+   * cancellation shape — with three differences that matter:
+   *
+   * - positions come from the save, so there is no ELK pass at all;
+   * - `toDiagramRelations`, not `toInternalRelations`: the latter drops any
+   *   interface without a consumer in the set, which is a legitimate diagram
+   *   (that is exactly what *Show inbound interfaces* produces). What was on
+   *   screen is decided by the saved ids, below, and by nothing else;
+   * - the three geometry refs are **reset**, not merged. `interfaceSlotRef` is
+   *   never pruned and `interfaceProviderRef` isn't pruned by
+   *   `removeApplication`, so a load would otherwise inherit the previous
+   *   diagram's slot assignments and anchor a circle to a rectangle that is
+   *   no longer there.
+   */
+  useEffect(() => {
+    if (!pendingLoad) return;
+    const { content, applications } = pendingLoad;
+    loadRequestedRef.current = true;
+    const generation = ++contentGenRef.current;
+    const superseded = () => contentGenRef.current !== generation;
+    let cancelled = false;
+
+    const run = async () => {
+      setSeeding(true);
+      setSeedError(null);
+      closeAllInfo();
+      try {
+        const applicationIds = applications.map((app) => app.id);
+        const fetched = await fetchApplicationsInterfaces(applicationIds);
+        if (cancelled || superseded()) return;
+
+        for (const node of fetched) {
+          appInterfacesCache.current.set(node.id, node);
+          for (const edge of node.relProviderApplicationToInterface?.edges ?? []) {
+            if (edge.node.factSheet) cacheInterfaceFactSheet(edge.node.factSheet);
+          }
+          for (const edge of node.relConsumerApplicationToInterface?.edges ?? []) {
+            if (edge.node.factSheet) cacheInterfaceFactSheet(edge.node.factSheet);
+          }
+        }
+
+        const { interfaces, edges } = toDiagramRelations(fetched);
+        const interfaceById = new Map(interfaces.map((iface) => [iface.id, iface]));
+        const edgeById = new Map(edges.map((edge) => [edge.id, edge]));
+
+        // Saved ids are the authority on what was on screen; the fetch only
+        // supplies their content. An id LeanIX no longer returns — the call
+        // guarantees no completeness — simply drops out.
+        const savedApplicationIds = new Set(applicationIds);
+        const restoredInterfaces = content.interfaces.filter(
+          (saved) =>
+            interfaceById.has(saved.id) && savedApplicationIds.has(saved.providerId),
+        );
+        const restoredInterfaceIds = new Set(restoredInterfaces.map((i) => i.id));
+        const restoredEdges = content.edges
+          .map((saved) => edgeById.get(`${saved.consumerId}::${saved.interfaceId}`))
+          .filter((edge): edge is DiscoverEdge => !!edge)
+          .filter(
+            (edge) =>
+              savedApplicationIds.has(edge.consumerId) &&
+              restoredInterfaceIds.has(edge.interfaceId),
+          );
+
+        rootIdsRef.current = new Set(content.rootIds.filter((id) => savedApplicationIds.has(id)));
+        interfaceProviderRef.current = new Map(
+          restoredInterfaces.map((saved) => [saved.id, saved.providerId]),
+        );
+        interfaceSlotRef.current = new Map(
+          restoredInterfaces.map((saved) => [saved.id, saved.slot]),
+        );
+
+        // Before committing nodes and edges: an edge not yet mounted has no
+        // listener, and reads its override on first render. The baseline flag
+        // is raised first so restoring the bows isn't mistaken for the user
+        // bending them — it stays raised until the nodes effect consumes it.
+        isBaselineUpdateRef.current = true;
+        setEdgeCurvatures(content.curvature);
+
+        const widthById = new Map(
+          content.applications.map((saved) => [saved.id, saved.width]),
+        );
+        const positionById = new Map(
+          content.applications.map((saved) => [saved.id, { x: saved.x, y: saved.y }]),
+        );
+
+        setNodes(() => {
+          const appNodes = applications.map((app) => {
+            // Rebuilt rather than deserialised: `data.onResize` is a closure
+            // over this render's handler and cannot survive a JSON round trip.
+            const node = makeApplicationNode(
+              app,
+              positionById.get(app.id) ?? { x: 0, y: 0 },
+              rootIdsRef.current.has(app.id),
+            );
+            const width = widthById.get(app.id);
+            return width === undefined
+              ? node
+              : { ...node, data: { ...node.data, width } };
+          });
+          const circles = restoredInterfaces.map((saved) =>
+            makeInterfaceNode(
+              interfaceById.get(saved.id)!,
+              { x: saved.x, y: saved.y },
+              saved.providerId,
+            ),
+          );
+          return [...appNodes, ...circles];
+        });
+        setEdgeMeta(restoredEdges);
+        requestAnimationFrame(() => flowRef.current?.fitView({ maxZoom: 1 }));
+        onLoadSettled?.(null);
+      } catch (e) {
+        if (cancelled || superseded()) return;
+        // Nothing was committed, so the canvas still holds the previous
+        // diagram — the parent keeps its active save and shows the message.
+        onLoadSettled?.(e instanceof Error ? e.message : String(e));
+      } finally {
+        if (!cancelled && !superseded()) setSeeding(false);
+      }
+    };
+
+    void run();
+    return () => {
+      cancelled = true;
+    };
+    // `onLoadSettled` is deliberately out: the parent recreates nothing, but
+    // an unstable callback would re-run a whole load.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingLoad, makeApplicationNode, cacheInterfaceFactSheet, closeAllInfo]);
 
   const removeApplication = useCallback((id: string) => {
     rootIdsRef.current.delete(id);
@@ -857,6 +1085,77 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
       }
     },
     [removeApplication, onApplicationHidden],
+  );
+
+  /** Reads refs only, like `snapshot`, and deliberately ignores `simplified`:
+   * a diagram saved from the Simple view must come back whole. */
+  const getDiagram = useCallback((): DiscoverDiagramContent | null => {
+    const current = nodesRef.current;
+    if (current.length === 0) return null;
+    const applicationIds = new Set(
+      current.filter((n) => n.type === "application").map((n) => n.id),
+    );
+    const interfaceIds = new Set(current.filter((n) => n.type === "interface").map((n) => n.id));
+    return {
+      rootIds: [...rootIdsRef.current].filter((id) => applicationIds.has(id)),
+      applications: current
+        .filter((n) => n.type === "application")
+        .map((n) => {
+          const width = (n.data as unknown as ApplicationNodeData).width;
+          return {
+            id: n.id,
+            x: n.position.x,
+            y: n.position.y,
+            // Only when the user actually resized the box.
+            ...(width !== undefined && width !== APP_NODE_WIDTH ? { width } : {}),
+          };
+        }),
+      interfaces: current
+        .filter((n) => n.type === "interface")
+        .map((n) => ({
+          id: n.id,
+          // `parentId` over `interfaceProviderRef`: the ref can hold stale
+          // entries (it isn't pruned by `removeApplication`), the parent link
+          // is what xyflow actually draws.
+          providerId: n.parentId ?? interfaceProviderRef.current.get(n.id) ?? "",
+          slot: interfaceSlotRef.current.get(n.id) ?? 0,
+          // Relative to the provider — see `makeInterfaceNode`.
+          x: n.position.x,
+          y: n.position.y,
+        }))
+        .filter((i) => i.providerId !== ""),
+      // Both ends re-checked, so a pruning race can't save a dangling link.
+      edges: edgeMetaRef.current
+        .filter((e) => applicationIds.has(e.consumerId) && interfaceIds.has(e.interfaceId))
+        .map((e) => ({ consumerId: e.consumerId, interfaceId: e.interfaceId })),
+      curvature: getAllEdgeCurvatures(),
+    };
+  }, []);
+
+  /** Any change to the canvas that wasn't one of the baseline resets above
+   * means the diagram has drifted from the active save. The parent owns the
+   * way back to clean, so this only ever reports the dirty direction. The
+   * `length === 0` guard skips the very first mount. */
+  useEffect(() => {
+    if (nodes.length === 0 && edgeMeta.length === 0) return;
+    if (isBaselineUpdateRef.current) {
+      isBaselineUpdateRef.current = false;
+      return;
+    }
+    onDirty?.();
+  }, [nodes, edgeMeta, onDirty]);
+
+  /** Curvature lives in a module store, so a handle drag reaches neither
+   * `nodes` nor `edgeMeta` — without this, bending a link would never mark
+   * the diagram as modified. A load restores curvature under the baseline
+   * flag, which this honours the same way. */
+  useEffect(
+    () =>
+      subscribeEdgeCurvatureChange(() => {
+        if (isBaselineUpdateRef.current) return;
+        onDirty?.();
+      }),
+    [onDirty],
   );
 
   /** Reads refs only — `nodesRef`/`edgeMetaRef` are re-synced on every render
@@ -1420,6 +1719,23 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
     return () => cancelAnimationFrame(frame);
   }, [membershipKey, renderHighlight]);
 
+  /** Drop the cards of nodes that have left the canvas. Without this a hidden
+   * node's id would sit in the set and its card would pop back if the node
+   * were ever added again — the same trap the `showInfoIcons` effect guards
+   * against. Compared against `nodes`, not `visibleNodes`: an interface the
+   * simplified view stopped drawing is still there, and its card is meant to
+   * return with it. */
+  useEffect(() => {
+    const prune = (current: ReadonlySet<string>) => {
+      const kept = [...current].filter((id) =>
+        nodesRef.current.some((n) => n.id === id),
+      );
+      return kept.length === current.size ? current : new Set(kept);
+    };
+    setOpenApplicationIds(prune);
+    setOpenInterfaceIds(prune);
+  }, [membershipKey]);
+
   /** xyflow rewrites a node's `className` when `dragging` flips, which wipes
    * whatever we put there. Repainting on drop is what keeps a dimmed
    * rectangle dimmed after the user has moved it. */
@@ -1427,25 +1743,22 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
     renderHighlight();
   }, [renderHighlight]);
 
+  /** Only the highlight pin moves here. Open identity cards are left alone:
+   * they are pinned, and clicking around the canvas to compare them must not
+   * dismiss them. */
   const handleNodeClick = useCallback(
     (_: unknown, node: Node) => {
-      // A click on the info icon stops propagation before it ever reaches
-      // here (see `ApplicationNode.tsx`), so this only ever runs for a
-      // click on the rectangle/circle itself — closing an open info card is
-      // correct in every such case ("click elsewhere", decision).
-      closeApplicationInfo();
       highlightedNodeIdRef.current =
         highlightedNodeIdRef.current === node.id ? null : node.id;
       renderHighlight();
     },
-    [closeApplicationInfo, renderHighlight],
+    [renderHighlight],
   );
 
   const handlePaneClick = useCallback(() => {
     highlightedNodeIdRef.current = null;
     renderHighlight();
-    closeApplicationInfo();
-  }, [closeApplicationInfo, renderHighlight]);
+  }, [renderHighlight]);
 
   /**
    * What the canvas holds, for the highlight panel's counters.
@@ -1493,10 +1806,39 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
 
   // Declared here, after `setAxisHighlight` exists: the handle is assembled
   // from callbacks defined throughout this component.
+  /** Reads refs only, so it never has to be rebuilt. `visibleNodes` and not
+   * `nodes`: the simplified view must not frame — nor capture — the interface
+   * circles it doesn't draw. */
+  const exportImage = useCallback(async (format: "png" | "svg"): Promise<Blob> => {
+    const viewport = containerRef.current?.querySelector<HTMLElement>(
+      ".react-flow__viewport",
+    );
+    if (!viewport) throw new Error("The diagram is not ready yet.");
+    // `boxesOf` resolves child positions: interface circles are xyflow child
+    // nodes whose `position` is relative to their provider, so their raw
+    // coordinates would frame the picture wrong. Open detail cards are added
+    // on top — they are draggable, so nothing in the node geometry knows how
+    // far out they reach.
+    const zoom = flowRef.current?.getViewport().zoom ?? 1;
+    const bounds = boundsOf([
+      ...boxesOf(visibleNodesRef.current),
+      ...overlayBoxes(viewport, zoom),
+    ]);
+    if (!bounds) throw new Error("There is nothing on the diagram to export.");
+    return captureViewport(viewport, bounds, format);
+  }, []);
+
   useImperativeHandle(
     ref,
-    () => ({ addApplication, removeApplication, snapshot, setAxisHighlight }),
-    [addApplication, removeApplication, snapshot, setAxisHighlight],
+    () => ({
+      addApplication,
+      removeApplication,
+      snapshot,
+      getDiagram,
+      setAxisHighlight,
+      exportImage,
+    }),
+    [addApplication, removeApplication, snapshot, getDiagram, setAxisHighlight, exportImage],
   );
 
   return (

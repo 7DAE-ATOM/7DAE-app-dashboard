@@ -345,7 +345,9 @@ function Chapter({
   onClear: () => void;
   children: React.ReactNode;
 }) {
-  const [open, setOpen] = useState(true);
+  // Folded on open, like the catalogue's filter chapters: the panel shows
+  // which axes exist before it shows two long trees.
+  const [open, setOpen] = useState(false);
   return (
     <FilterSection
       label={label}

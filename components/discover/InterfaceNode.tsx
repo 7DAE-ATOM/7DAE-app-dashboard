@@ -25,10 +25,10 @@ export default function InterfaceNode({
   id,
   data,
 }: Readonly<{ id: string; data: InterfaceNodeData }>) {
-  const { openInterfaceId, toggleInterface, close } = useApplicationInfo();
+  const { openInterfaceIds, toggleInterface, closeInterface } = useApplicationInfo();
   const { showInfoIcons } = useDiscoverDisplaySettings();
   const label = data.name || data.protocol || "Interface";
-  const infoOpen = openInterfaceId === id;
+  const infoOpen = openInterfaceIds.has(id);
 
   return (
     <div
@@ -69,7 +69,7 @@ export default function InterfaceNode({
               name={data.name}
               protocol={data.protocol}
               dataObjects={data.dataObjects}
-              onClose={close}
+              onClose={() => closeInterface(id)}
             />
           )}
         </>

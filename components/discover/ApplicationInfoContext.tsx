@@ -3,28 +3,34 @@
 import { createContext, useContext } from "react";
 import type { Application } from "@/lib/types";
 
+const EMPTY: ReadonlySet<string> = new Set();
+
 export type ApplicationInfoContextValue = {
-  openApplicationId: string | null;
-  /** Interfaces get the same treatment (see `InterfaceInfoCard`). The two ids
-   * are derived from a single piece of state in `DiscoverGraph`, so at most
-   * one card is ever open. */
-  openInterfaceId: string | null;
+  /** Every application whose card is open. A **set**, not a single id: cards
+   * are pinned, so opening one never closes another. Only its own cross
+   * does. */
+  openApplicationIds: ReadonlySet<string>;
+  /** Interfaces get the same treatment (see `InterfaceInfoCard`), on their
+   * own set — the two kinds share nothing but the gesture. */
+  openInterfaceIds: ReadonlySet<string>;
   toggle: (id: string) => void;
   toggleInterface: (id: string) => void;
-  close: () => void;
+  closeApplication: (id: string) => void;
+  closeInterface: (id: string) => void;
   resolveApplication: (id: string) => Application | null;
 };
 
-/** State/logic lives in `DiscoverGraph` (which app id's card is open, if
- * any) — this context just makes it reachable from any `ApplicationNode`
- * without threading it through every node's `data` (which would force
- * rebuilding every Application node's data object on each open/close). */
+/** State/logic lives in `DiscoverGraph` (which cards are open) — this context
+ * just makes it reachable from any `ApplicationNode` without threading it
+ * through every node's `data` (which would force rebuilding every Application
+ * node's data object on each open/close). */
 export const ApplicationInfoContext = createContext<ApplicationInfoContextValue>({
-  openApplicationId: null,
-  openInterfaceId: null,
+  openApplicationIds: EMPTY,
+  openInterfaceIds: EMPTY,
   toggle: () => {},
   toggleInterface: () => {},
-  close: () => {},
+  closeApplication: () => {},
+  closeInterface: () => {},
   resolveApplication: () => null,
 });
 

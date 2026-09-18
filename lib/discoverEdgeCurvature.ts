@@ -10,9 +10,10 @@ import { useCallback, useSyncExternalStore } from "react";
  * global curvature setting instead (`lib/discoverDisplaySettings.ts`).
  *
  * Session-only by design — no `localStorage`, no serialisation into the shared
- * Discover seed. Making these adjustments durable would turn curvature into a
- * property of the *diagram* (to be carried by the seed and the exports) rather
- * than a reading comfort, which is a decision to take after use.
+ * Discover seed. A **named save** is the one exception: it is an explicit act,
+ * and a diagram reopened without the bows its author dialled in would be
+ * reopened wrong. Hence `getAllEdgeCurvatures` / `setEdgeCurvatures`, used by
+ * `lib/discoverDiagramSaves.ts` — the store itself still persists nothing.
  *
  * Listeners are kept **per edge id** rather than in one global set: a drag
  * fires on every pointer move, and only the edge being dragged should re-render.
@@ -24,8 +25,22 @@ import { useCallback, useSyncExternalStore } from "react";
 const offsets = new Map<string, number>();
 const listeners = new Map<string, Set<() => void>>();
 
+/** Fired on *any* change, unlike `listeners` which is keyed per edge id.
+ * `DiscoverGraph` uses it to notice that the diagram drifted from its saved
+ * state: a curvature drag goes through neither `nodes` nor `edgeMeta`, so it
+ * is invisible to every other change signal. */
+const changeListeners = new Set<() => void>();
+
 function emit(edgeId: string): void {
   for (const listener of listeners.get(edgeId) ?? []) listener();
+  for (const listener of changeListeners) listener();
+}
+
+export function subscribeEdgeCurvatureChange(listener: () => void): () => void {
+  changeListeners.add(listener);
+  return () => {
+    changeListeners.delete(listener);
+  };
 }
 
 export function useEdgeCurvature(edgeId: string): number | null {
@@ -58,6 +73,36 @@ export function setEdgeCurvature(edgeId: string, offset: number | null): void {
 
 export function getEdgeCurvature(edgeId: string): number | null {
   return offsets.get(edgeId) ?? null;
+}
+
+/**
+ * Every override, for a save. The keys mix the two edge-id formats on purpose
+ * — `consumerId::interfaceId` in the full view, `source->target` in the
+ * simplified one — because the same relation carries an independent bow in
+ * each. Copying the table wholesale keeps both without having to tell them
+ * apart.
+ */
+export function getAllEdgeCurvatures(): Record<string, number> {
+  return Object.fromEntries(offsets);
+}
+
+/**
+ * Replaces the whole table, for a diagram load.
+ *
+ * Emits on the **union** of the old and new keys: an edge that had a bow
+ * before the load and none after is only repainted if something notifies its
+ * listener, and nothing else would. An edge whose component isn't mounted yet
+ * needs no emission — it reads the value through `getSnapshot` on first
+ * render, which is why restoring curvature *before* committing nodes and
+ * edges is the safe order.
+ */
+export function setEdgeCurvatures(next: Record<string, number>): void {
+  const touched = new Set([...offsets.keys(), ...Object.keys(next)]);
+  offsets.clear();
+  for (const [edgeId, offset] of Object.entries(next)) {
+    if (Number.isFinite(offset)) offsets.set(edgeId, offset);
+  }
+  for (const edgeId of touched) emit(edgeId);
 }
 
 /**

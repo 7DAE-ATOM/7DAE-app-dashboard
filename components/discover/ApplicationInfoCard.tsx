@@ -63,6 +63,10 @@ export default function ApplicationInfoCard({ application, onClose }: Readonly<P
       onClick={(e) => e.stopPropagation()}
       onContextMenu={(e) => e.stopPropagation()}
       className="nodrag absolute z-20 flex w-64 flex-col gap-1.5 rounded-card border border-border bg-surface p-3 shadow-lg"
+      // Content, not chrome: image exports widen their frame to fit it rather
+      // than cropping it (see `lib/discoverImageExport.ts`). It is draggable,
+      // so it can sit well outside the node boxes.
+      data-export-extend=""
       style={{
         left: "calc(100% + 8px)",
         top: anchorTop ?? undefined,
@@ -82,6 +86,7 @@ export default function ApplicationInfoCard({ application, onClose }: Readonly<P
           type="button"
           onClick={onClose}
           onPointerDown={(e) => e.stopPropagation()}
+          data-export-hide=""
           aria-label="Close"
           className="shrink-0 text-muted hover:text-fg"
         >

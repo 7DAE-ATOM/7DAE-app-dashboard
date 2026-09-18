@@ -59,6 +59,9 @@ function ResizeHandle({
   return (
     <div
       className="nodrag absolute top-0 bottom-0 z-10 flex items-center justify-center"
+      // An edit affordance, not content: image exports drop it (see
+      // `lib/discoverImageExport.ts`).
+      data-export-hide=""
       style={{
         [edge]: -5,
         width: 10,
@@ -85,9 +88,10 @@ export default function ApplicationNode({
   data,
 }: Readonly<{ id: string; data: ApplicationNodeData }>) {
   const settings = useDiscoverDisplaySettings();
-  const { openApplicationId, toggle, close, resolveApplication } = useApplicationInfo();
+  const { openApplicationIds, toggle, closeApplication, resolveApplication } =
+    useApplicationInfo();
   const width = data.width ?? APP_NODE_WIDTH;
-  const infoOpen = openApplicationId === id;
+  const infoOpen = openApplicationIds.has(id);
   return (
     <div
       className="relative flex flex-col justify-center rounded-card border bg-surface px-3 py-2 shadow-sm"
@@ -122,6 +126,7 @@ export default function ApplicationNode({
           <button
             type="button"
             className="nodrag absolute bottom-0.5 right-0.5 z-10 flex items-center justify-center text-muted hover:text-accent"
+            data-export-hide=""
             aria-label="Application info"
             onClick={(e) => {
               e.stopPropagation();
@@ -131,7 +136,10 @@ export default function ApplicationNode({
             <InfoIcon size={12} />
           </button>
           {infoOpen && (
-            <ApplicationInfoCard application={resolveApplication(id)} onClose={close} />
+            <ApplicationInfoCard
+              application={resolveApplication(id)}
+              onClose={() => closeApplication(id)}
+            />
           )}
         </>
       )}

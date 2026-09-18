@@ -4,24 +4,37 @@ import { useEffect, useRef, useState } from "react";
 import clsx from "clsx";
 import ExportIcon from "@/components/icons/ExportIcon";
 
+export type ExportFormat = "png" | "svg" | "mermaid";
+
 type Props = {
   /** No graph, nothing to export — the whole control goes quiet. */
   disabled: boolean;
-  onExportMermaid: () => void;
+  /** The format currently being generated, `null` when idle. Image captures
+   * take a moment on a dense graph, and a second click would start a
+   * competing one. */
+  busy: ExportFormat | null;
+  onExport: (format: ExportFormat) => void;
 };
+
+const FORMATS: { value: ExportFormat; label: string; extension: string }[] = [
+  { value: "png", label: "PNG", extension: ".png" },
+  { value: "svg", label: "SVG", extension: ".svg" },
+  { value: "mermaid", label: "Mermaid", extension: ".mmd" },
+];
 
 /**
  * "Export" menu for the Discover toolbar, sitting left of the display-settings
  * gear and built on the same popover mechanics (Escape, outside click, same
  * button size) so the two controls read as a pair.
  *
- * PNG and SVG are listed but inert: they capture the canvas, which is a
- * different mechanism altogether and a separate iteration. Showing them now
- * means the menu won't have to be redrawn then.
+ * PNG and SVG capture the rendered canvas; Mermaid rebuilds the diagram from
+ * the model. Two unrelated mechanisms behind one menu — which is why the
+ * component only forwards a format and knows nothing about either.
  */
 export default function DiscoverExportMenu({
   disabled,
-  onExportMermaid,
+  busy,
+  onExport,
 }: Readonly<Props>) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -67,30 +80,34 @@ export default function DiscoverExportMenu({
           <div className="mb-1 px-2 text-xs uppercase tracking-[0.1em] text-muted">
             Export as
           </div>
-          {(["PNG", "SVG"] as const).map((format) => (
-            <button
-              key={format}
-              type="button"
-              role="menuitem"
-              disabled
-              className={clsx(itemClass, "cursor-not-allowed text-muted")}
-            >
-              <span>{format}</span>
-              <span className="text-[10px] uppercase tracking-wider">Soon</span>
-            </button>
-          ))}
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              setOpen(false);
-              onExportMermaid();
-            }}
-            className={clsx(itemClass, "text-fg hover:bg-surface-2")}
-          >
-            <span>Mermaid</span>
-            <span className="font-mono text-[10px] text-muted">.mmd</span>
-          </button>
+          {FORMATS.map((format) => {
+            const running = busy === format.value;
+            return (
+              <button
+                key={format.value}
+                type="button"
+                role="menuitem"
+                // Any generation in flight locks the whole menu: they all read
+                // the same canvas.
+                disabled={busy !== null}
+                onClick={() => {
+                  setOpen(false);
+                  onExport(format.value);
+                }}
+                className={clsx(
+                  itemClass,
+                  busy === null
+                    ? "text-fg hover:bg-surface-2"
+                    : "cursor-not-allowed text-muted",
+                )}
+              >
+                <span>{format.label}</span>
+                <span className="font-mono text-[10px] text-muted">
+                  {running ? "…" : format.extension}
+                </span>
+              </button>
+            );
+          })}
         </div>
       )}
     </div>

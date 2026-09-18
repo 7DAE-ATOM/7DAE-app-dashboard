@@ -6,7 +6,11 @@ const elk = new ELK();
  * then resize per-node (see `ApplicationNode.tsx`'s resize handles and
  * `DiscoverGraph`'s `handleResizeApplication`); the height never changes. */
 export const APP_NODE_WIDTH = 200;
-export const APP_NODE_HEIGHT = 60;
+/** Tall enough for the three rows a card can show at once — name (20px line
+ * box), External ID and manager (16px each) — plus its `py-2` padding and its
+ * border: 52 + 16 + 4. At 60 the last row overflowed the rectangle, which was
+ * survivable on screen and plainly wrong in an exported image. */
+export const APP_NODE_HEIGHT = 72;
 export const INTERFACE_NODE_SIZE = 20;
 /** Floor under which a rectangle can't be shrunk, even with no interface
  * circles attached — keeps the labels usable. */

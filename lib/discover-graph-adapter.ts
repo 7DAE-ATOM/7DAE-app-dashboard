@@ -148,6 +148,54 @@ export function toInternalRelations(
   return { interfaces, edges };
 }
 
+/**
+ * Every interface provided by the fetched applications, and every edge
+ * reaching it — the **permissive** twin of `toInternalRelations`, for
+ * rehydrating a saved diagram.
+ *
+ * The difference is the whole point: `toInternalRelations` drops an interface
+ * that has no consumer inside the selection, because a catalogue-seeded graph
+ * is meant to be closed on that selection. A saved diagram is not — *Show
+ * inbound interfaces* legitimately leaves a circle with no consumer drawn, and
+ * filtering here would make those circles vanish on reload, silently. What may
+ * legitimately be dropped is decided by the caller, against the **saved** ids,
+ * which are the only authority on what was on screen.
+ */
+export function toDiagramRelations(nodes: ApplicationInterfacesNode[]): {
+  interfaces: DiscoverInterfaceNode[];
+  edges: DiscoverEdge[];
+} {
+  const interfaces: DiscoverInterfaceNode[] = [];
+  const edges: DiscoverEdge[] = [];
+  const seenInterfaces = new Set<string>();
+  const seenEdges = new Set<string>();
+
+  for (const node of nodes) {
+    const factSheets = new Map(
+      (node.relProviderApplicationToInterface?.edges ?? [])
+        .map((e) => e.node.factSheet)
+        .filter((iface): iface is InterfaceNode => !!iface)
+        .map((iface) => [iface.id, iface]),
+    );
+
+    for (const iface of toInboundInterfaces(node)) {
+      if (!seenInterfaces.has(iface.id)) {
+        seenInterfaces.add(iface.id);
+        interfaces.push(iface);
+      }
+      const factSheet = factSheets.get(iface.id);
+      if (!factSheet) continue;
+      for (const edge of toInterfaceConsumers(factSheet).edges) {
+        if (seenEdges.has(edge.id)) continue;
+        seenEdges.add(edge.id);
+        edges.push(edge);
+      }
+    }
+  }
+
+  return { interfaces, edges };
+}
+
 /** Consumers of an already-visible Interface, for *Show dependencies* on a
  * circle — from either the provider-side query (nested consumers already
  * present) or a dedicated `fetchInterfaceDependencies` call. */
