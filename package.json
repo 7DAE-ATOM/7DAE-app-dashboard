@@ -5,13 +5,18 @@
   "scripts": {
     "dev": "next dev -p 3001",
     "build": "next build",
-    "start": "npx --yes serve out -l 3001",
-    "lint": "eslint ."
+    "start": "serve out -l 3001",
+    "lint": "eslint .",
+    "generate:map": "node scripts/generate-world-map.mjs",
+    "check:external-urls": "node scripts/check-external-urls.mjs",
+    "collect:licenses": "node scripts/collect-licenses.mjs"
   },
   "engines": {
     "node": ">=20.9.0"
   },
   "dependencies": {
+    "@fontsource-variable/inter": "5.3.0",
+    "@fontsource-variable/jetbrains-mono": "5.3.0",
     "@photo-sphere-viewer/core": "5.14.1",
     "@react-pdf/renderer": "4.5.1",
     "@xyflow/react": "12.11.3",
@@ -19,11 +24,9 @@
     "elkjs": "0.12.0",
     "framer-motion": "11.18.2",
     "html-to-image": "1.11.13",
-    "maplibre-gl": "4.7.1",
     "next": "16.2.7",
     "react": "19.2.7",
     "react-dom": "19.2.7",
-    "react-map-gl": "7.1.9",
     "react-photo-sphere-viewer": "6.2.3",
     "swr": "2.4.1",
     "three": "0.169.0"
@@ -41,6 +44,7 @@
     "eslint": "9.39.4",
     "eslint-config-next": "15.5.19",
     "postcss": "8.5.15",
+    "serve": "14.2.6",
     "tailwindcss": "3.4.19",
     "topojson-client": "3.1.0",
     "typescript": "5.9.3",

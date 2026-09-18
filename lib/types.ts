@@ -140,7 +140,13 @@ export type Application = {
   solutionArchitect: Person | null;
   completion: number;
   businessCriticality: BusinessCriticality;
+  /** Joined for display (the Identity tab renders it as-is). Lossy —
+   *  use `airbusSites` for anything that reasons about sites. */
   airbusSite: string | null;
+  /** The raw values, one per site, as LeanIX returns them. Free text:
+   *  `tjn` and `bengalore` are real values. Match through
+   *  `lib/airbusSites.ts`, never by equality. */
+  airbusSites: string[];
   functionalSuitability: string | null;
   technicalSuitability: string | null;
   kpi_functionalSuitability: string[];

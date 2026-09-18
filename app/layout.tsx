@@ -1,6 +1,14 @@
 import type { Metadata } from "next";
 import Header from "@/components/Header";
 import Providers from "./providers";
+// Self-hosted, and therefore offline: `wght.css` declares every subset
+// (latin, latin-ext, cyrillic, greek, vietnamese) behind `unicode-range`,
+// so the browser fetches only what a page actually needs — latin-ext
+// included, which is what keeps Polish or Turkish names in the right face.
+// The bundler emits the woff2 under `_next/static/media` and rewrites the
+// URLs through `assetPrefix`, so the AFTER basePath is honoured.
+import "@fontsource-variable/inter/wght.css";
+import "@fontsource-variable/jetbrains-mono/wght.css";
 import "./globals.css";
 
 export const metadata: Metadata = {

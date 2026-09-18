@@ -95,6 +95,14 @@ pipeline {
                 script {
                     def atomApiUrl = TARGET_ENV == 'prod' ? ATOM_API_URL_PROD : ATOM_API_URL_VAL
                     sh "BASE_HREF=${BASE_HREF} NEXT_PUBLIC_BASE_HREF=${BASE_HREF} NEXT_PUBLIC_ATOM_API_BASE_URL=${atomApiUrl} npm run build"
+
+                    // Licences of the redistributed fonts, then the third-party
+                    // URL check. Both run HERE, inside the Build stage and
+                    // BEFORE the stash: the later stages run on other agents and
+                    // receive nothing but the stash, and a failure here must stop
+                    // the artefact from being packaged at all, not merely report.
+                    sh "npm run collect:licenses"
+                    sh "NEXT_PUBLIC_ATOM_API_BASE_URL=${atomApiUrl} npm run check:external-urls"
                 }
                 echo "Stashing static export and Docker config for packaging..."
                 stash includes: 'out/**,Dockerfile,nginx.conf,nginx-custom.conf', name: 'next-build'
