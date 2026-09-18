@@ -192,6 +192,10 @@ export function toApplication(node: ApplicationNode): Application {
     businessCriticality:
       (node.businessCriticality as Application["businessCriticality"]) ?? "NA",
     airbusSite: (node.airbusSite ?? []).join(", ") || null,
+    // Kept alongside the joined string rather than replacing it: the
+    // Identity tab renders `airbusSite` directly, and the map needs the
+    // values individually to count applications per site.
+    airbusSites: node.airbusSite ?? [],
     functionalSuitability: node.functionalSuitability?.trim() || null,
     technicalSuitability: node.technicalSuitability?.trim() || null,
     kpi_functionalSuitability: node.kpi_functionalSuitability ?? [],

@@ -31,3 +31,77 @@
   font-size: 0.7rem;
   font-weight: 600;
 }
+
+/* Offline basemap (components/MapView.tsx). Colours come from the `--color-*`
+ * tokens, so the light/dark switch is a pure repaint — no JS, no refetch,
+ * unlike the two CDN tile styles this replaced. */
+.theme-map-first .map-outline {
+  background: var(--color-bg);
+}
+
+.theme-map-first .map-land {
+  fill: var(--color-surface-2);
+  stroke: var(--color-border);
+}
+
+.theme-map-first .map-border {
+  fill: none;
+  stroke: var(--color-border);
+}
+
+/* Required, not cosmetic: `preserveAspectRatio="slice"` scales the 2000-unit
+ * viewBox up to cover the container, which would thicken these strokes by the
+ * same factor. */
+.theme-map-first .map-land,
+.theme-map-first .map-border {
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+/* Site bubbles. One disc per site, area-proportional, with the count written
+ * inside — the number is the information, the size only a cue. */
+.theme-map-first .map-bubble {
+  cursor: pointer;
+  outline: none;
+}
+
+.theme-map-first .map-bubble-disc {
+  fill: color-mix(in srgb, var(--color-accent) 85%, transparent);
+  stroke: var(--color-bg);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+  transition: fill 0.15s ease;
+}
+
+.theme-map-first .map-bubble:hover .map-bubble-disc,
+.theme-map-first .map-bubble:focus-visible .map-bubble-disc {
+  fill: var(--color-accent);
+}
+
+.theme-map-first .map-bubble:focus-visible .map-bubble-disc {
+  stroke: var(--color-fg);
+  stroke-width: 3;
+}
+
+.theme-map-first .map-bubble-label {
+  fill: var(--color-accent-fg);
+  font-family: var(--font-mono);
+  font-weight: 700;
+  text-anchor: middle;
+  dominant-baseline: central;
+  pointer-events: none;
+}
+
+/* Drawn only for a bubble that has been moved off its true position — Bremen,
+ * which no European framing can separate from Hamburg. Without the line the
+ * map would simply assert something false. */
+.theme-map-first .map-bubble-leader {
+  stroke: var(--color-muted);
+  stroke-width: 1;
+  stroke-dasharray: 4 3;
+  vector-effect: non-scaling-stroke;
+}
+
+.theme-map-first .map-bubble-anchor {
+  fill: var(--color-muted);
+}
