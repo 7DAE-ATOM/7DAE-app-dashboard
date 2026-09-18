@@ -1,11 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import FilterBar, { type FilterValue } from "./FilterBar";
+import { countActiveFilters } from "@/lib/appFilters";
 import type {
   ApplicationCategory,
   ApplicationStatus,
+  BusinessCapabilityTree,
+  DataObjectTree,
   BusinessCriticality,
 } from "@/lib/types";
 
@@ -14,8 +17,18 @@ type Props = {
   statuses: ApplicationStatus[];
   portfolios: string[];
   businessCriticalities: BusinessCriticality[];
+  capabilityTree?: BusinessCapabilityTree | null;
+  capabilityCounts?: Map<string, number>;
+  dataObjectTree?: DataObjectTree | null;
+  dataObjectCounts?: Map<string, number>;
+  capabilityResetToken?: number;
+  /** Forwarded to `FilterBar` — same "ACTIONS" row as on desktop. */
+  actions?: ReactNode;
+  /** Forwarded to `FilterBar` — hover/focus result preview. */
+  previewCount?: (next: FilterValue) => number;
   value: FilterValue;
   onChange: (v: FilterValue) => void;
+  onClear: () => void;
   count: number;
 };
 
@@ -24,19 +37,20 @@ export default function FilterSheet({
   statuses,
   portfolios,
   businessCriticalities,
+  capabilityTree,
+  capabilityCounts,
+  dataObjectTree,
+  dataObjectCounts,
+  capabilityResetToken,
+  actions,
+  previewCount,
   value,
   onChange,
+  onClear,
   count,
 }: Props) {
   const [open, setOpen] = useState(false);
-  const activeCount =
-    value.categories.length +
-    value.statuses.length +
-    value.portfolios.length +
-    value.businessCriticalities.length +
-    (value.search ? 1 : 0) +
-    (value.operator ? 1 : 0) +
-    (value.photo !== "all" ? 1 : 0);
+  const activeCount = countActiveFilters(value);
   return (
     <>
       <button
@@ -84,8 +98,16 @@ export default function FilterSheet({
                 statuses={statuses}
                 portfolios={portfolios}
                 businessCriticalities={businessCriticalities}
+                capabilityTree={capabilityTree}
+                capabilityCounts={capabilityCounts}
+                dataObjectTree={dataObjectTree}
+                dataObjectCounts={dataObjectCounts}
+                capabilityResetToken={capabilityResetToken}
+                actions={actions}
+                previewCount={previewCount}
                 value={value}
                 onChange={onChange}
+                onClear={onClear}
               />
               <button
                 type="button"

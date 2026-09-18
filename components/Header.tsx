@@ -7,7 +7,7 @@ import clsx from "clsx";
 import ThemeToggle from "./ThemeToggle";
 import AboutDialog from "./AboutDialog";
 import RefreshButton from "./RefreshButton";
-import { resetCatalogueFilters } from "@/lib/catalogueFilters";
+import PhotoCacheSettingsControl from "./PhotoCacheSettingsControl";
 
 export default function Header() {
   // usePathname() is typed `string | null` in some Next versions (e.g. 16.2.9)
@@ -20,6 +20,8 @@ export default function Header() {
     pathname === "/" || pathname.startsWith("/application");
   const mapActive =
     pathname === "/map" || pathname.startsWith("/map/");
+  const discoverActive =
+    pathname === "/discover" || pathname.startsWith("/discover/");
 
   const itemClass = (active: boolean) =>
     clsx(
@@ -31,10 +33,10 @@ export default function Header() {
 
   return (
     <header className="sticky top-0 z-20 border-b border-[#00205B]/15 bg-white">
-      <div className="relative px-4 md:px-6 py-3 flex items-center gap-6 max-w-[1600px] mx-auto">
+      <div className="relative px-4 md:px-6 py-3 flex items-center gap-6">
         <Link
           href="/"
-          className="flex items-center hover:opacity-80 transition-opacity"
+          className="flex flex-col items-start justify-center hover:opacity-80 transition-opacity"
           aria-label="Airbus — go to catalogue"
         >
           {logoFailed ? (
@@ -47,31 +49,28 @@ export default function Header() {
               onError={() => setLogoFailed(true)}
             />
           )}
+          <span className="text-[10px] leading-tight tracking-wide whitespace-nowrap">
+            <span className="font-bold text-[#00205B]">Applications</span>{" "}
+            <span className="font-semibold text-[#00205B]/55">Board</span>
+          </span>
         </Link>
 
         <nav className="flex items-center gap-1">
-          <Link
-            href="/"
-            onClick={() => resetCatalogueFilters()}
-            className={itemClass(catalogueActive)}
-          >
+          <Link href="/" className={itemClass(catalogueActive)}>
             Catalogue
           </Link>
           <Link href="/map" className={itemClass(mapActive)}>
             Map
           </Link>
+          <Link href="/discover" className={itemClass(discoverActive)}>
+            Discover
+          </Link>
         </nav>
-
-        {/* App title, perfectly centered in the bar regardless of side widths.
-            Hidden on small screens to avoid overlapping nav/actions. */}
-        <span className="hidden md:block absolute left-1/2 -translate-x-1/2 pointer-events-none whitespace-nowrap text-base tracking-wide">
-          <span className="font-bold text-[#00205B]">Applications</span>{" "}
-          <span className="font-semibold text-[#00205B]/55">Board</span>
-        </span>
 
         <div className="ml-auto flex items-center gap-2 min-h-[32px]">
           {/* RESERVED: avatar, global search, notifications (V2) */}
           <RefreshButton />
+          <PhotoCacheSettingsControl />
           <AboutDialog />
           <ThemeToggle />
         </div>

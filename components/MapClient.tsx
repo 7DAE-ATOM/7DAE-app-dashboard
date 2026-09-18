@@ -1,11 +1,16 @@
 "use client";
 
-import { useMemo, useState } from "react";
 import dynamic from "next/dynamic";
-import FilterBar, { type FilterValue } from "@/components/FilterBar";
+import FilterPanel from "@/components/FilterPanel";
 import FilterSheet from "@/components/FilterSheet";
-import { filterApplications } from "@/lib/applications";
+import { useApplicationActions } from "@/components/useApplicationActions";
+import {
+  clearFilters,
+  setCatalogueFilters,
+  useCatalogueFilters,
+} from "@/lib/appFilters";
 import { useApplications } from "@/lib/useApplications";
+import { useFilteredApplications } from "@/lib/useFilteredApplications";
 
 const MapView = dynamic(() => import("@/components/MapView"), { ssr: false });
 
@@ -57,47 +62,76 @@ function MapLoaded({
   businessCriticalities,
   portfolios,
 }: LoadedProps) {
-  const [filters, setFilters] = useState<FilterValue>({
-    search: "",
-    photo: "all",
-    categories: [],
-    statuses: [],
-    portfolios: [],
-    operator: "",
-    businessCriticalities: [],
-  });
+  // Same store as the catalogue: a filter set there applies here, and the
+  // other way round.
+  const { filters, resetToken } = useCatalogueFilters();
 
-  const visible = useMemo(
-    () => filterApplications(applications, filters),
-    [applications, filters],
-  );
+  const {
+    visible,
+    capabilityTree,
+    capabilityCounts,
+    dataObjectTree,
+    dataObjectCounts,
+    countUnder,
+  } =
+    useFilteredApplications(applications, filters);
+
+  const { actions, dialog } = useApplicationActions({
+    applications,
+    visible,
+    filters,
+    capabilityTree,
+    dataObjectTree,
+  });
 
   return (
     <div className="relative h-[calc(100vh-57px)]">
       <div className="absolute inset-0">
         <MapView applications={visible} />
       </div>
-      <div className="absolute top-4 left-4 w-[340px] max-h-[calc(100vh-100px)] glass-panel p-5 overflow-y-auto z-10 hidden lg:block">
-        <h2 className="text-lg font-bold mb-1">Applications by location</h2>
-        <p className="text-xs text-muted mb-4">No location data available yet</p>
-        <FilterBar
-          categories={categories}
-          statuses={statuses}
-          portfolios={portfolios}
-          businessCriticalities={businessCriticalities}
-          value={filters}
-          onChange={setFilters}
-        />
-      </div>
+      {/* `lg:flex`, not `lg:block`: the panel's root is a flex column, and a
+          block display would break the height cap that makes the frame
+          scroll internally. */}
+      <FilterPanel
+        className="absolute top-4 left-4 md:left-6 w-[340px] max-h-[calc(100vh-100px)] z-10 hidden lg:flex"
+        categories={categories}
+        statuses={statuses}
+        portfolios={portfolios}
+        businessCriticalities={businessCriticalities}
+        capabilityTree={capabilityTree}
+        capabilityCounts={capabilityCounts}
+        dataObjectTree={dataObjectTree}
+        dataObjectCounts={dataObjectCounts}
+        capabilityResetToken={resetToken}
+        actions={actions}
+        previewCount={countUnder}
+        value={filters}
+        onChange={setCatalogueFilters}
+        onClear={clearFilters}
+        count={visible.length}
+        total={applications.length}
+      />
       <FilterSheet
         categories={categories}
         statuses={statuses}
         portfolios={portfolios}
         businessCriticalities={businessCriticalities}
+        capabilityTree={capabilityTree}
+        capabilityCounts={capabilityCounts}
+        dataObjectTree={dataObjectTree}
+        dataObjectCounts={dataObjectCounts}
+        capabilityResetToken={resetToken}
+        actions={actions}
+        previewCount={countUnder}
         value={filters}
-        onChange={setFilters}
+        onChange={setCatalogueFilters}
+        onClear={clearFilters}
         count={visible.length}
       />
+
+      {/* After the sheet, not before: both are `fixed z-50`, so DOM order is
+          what puts the dialog on top when the mobile sheet is open. */}
+      {dialog}
     </div>
   );
 }

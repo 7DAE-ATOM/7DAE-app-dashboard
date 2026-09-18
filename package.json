@@ -14,8 +14,11 @@
   "dependencies": {
     "@photo-sphere-viewer/core": "5.14.1",
     "@react-pdf/renderer": "4.5.1",
+    "@xyflow/react": "12.11.3",
     "clsx": "2.1.1",
+    "elkjs": "0.12.0",
     "framer-motion": "11.18.2",
+    "html-to-image": "1.11.13",
     "maplibre-gl": "4.7.1",
     "next": "16.2.7",
     "react": "19.2.7",

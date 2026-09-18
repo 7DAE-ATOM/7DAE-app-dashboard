@@ -87,7 +87,7 @@ const TEMPLATE_SECONDARY = "#6574ff";
 
 /** Curated [primary, secondary] pairs for the plane's gradient + side dots.
  * All chosen to stay legible against the template's fixed dark background. */
-const COLOR_PAIRS: readonly [string, string][] = [
+export const COLOR_PAIRS: readonly [string, string][] = [
   ["#18c6e8", "#6574ff"], // cyan / indigo (original)
   ["#14e0b4", "#34d399"], // teal / emerald
   ["#ffb547", "#ff7847"], // amber / orange
@@ -96,7 +96,7 @@ const COLOR_PAIRS: readonly [string, string][] = [
   ["#fb7185", "#f43f5e"], // rose / red
 ];
 
-function hashSeed(seed: string): number {
+export function hashSeed(seed: string): number {
   let h = 2166136261;
   for (let i = 0; i < seed.length; i++) {
     h ^= seed.charCodeAt(i);

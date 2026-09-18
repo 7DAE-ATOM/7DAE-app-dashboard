@@ -1,0 +1,59 @@
+{
+  "kpi_functionalSuitability": {
+    "label": "Suitability",
+    "values": {
+      "RTC_status_exist": "RTC",
+      "BRD_status_exist": "BRD",
+      "UG_status_exist": "User Guide",
+      "SQD_status_exist": "Quality Doc",
+      "PP_status_exist": "Project Plan"
+    }
+  },
+  "kpi_maintainability": {
+    "label": "Maintainability",
+    "values": {
+      "BuildChain_status_exist": "CI/CD",
+      "CodeReferential_status_exist": "Source Code",
+      "QualityAnalysis_status_exist": "QA Analysis",
+      "Alfabet_status_exist": "MyPortfolio Ref",
+      "Atom_status_exist": "Atom Ref",
+      "MDC_status_exist": "MyDataCompliance"
+    }
+  },
+  "kpi_understandability": {
+    "label": "Understandability",
+    "values": {
+      "ARD_status_exist": "ARD",
+      "DD_status_exist": "Design Dossier",
+      "RN_status_exist": "Release Note",
+      "ORS_status_exist": "ORS"
+    }
+  },
+  "kpi_security": {
+    "label": "Security",
+    "values": {
+      "ard_status_dsValidated": "Security validation"
+    }
+  },
+  "deta06": {
+    "label": "DETA 06",
+    "values": {
+      "rtc": "RTC",
+      "brd": "BRD",
+      "sug": "User Guide",
+      "sqd": "Quality Doc",
+      "pp": "Project Plan",
+      "buc": "CI/CD",
+      "sc": "Source Code",
+      "qa": "QA Analysis",
+      "alf": "MyPortfolio Ref",
+      "atom": "Atom Ref",
+      "mdc": "MyDataCompliance",
+      "ard": "ARD",
+      "dd": "Design Dossier",
+      "rn": "Release Note",
+      "ors": "ORS",
+      "dsv": "Security Validation"
+    }
+  }
+}

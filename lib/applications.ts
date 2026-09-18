@@ -1,7 +1,13 @@
-import { fetchApplication, fetchApplications } from "./atom-api";
+import {
+  fetchApplication,
+  fetchApplicationLinks,
+  fetchApplications,
+} from "./atom-api";
 import { toApplication } from "./application-adapter";
+import { toApplicationLinks } from "./application-links-adapter";
 import type {
   Application,
+  ApplicationLink,
   ApplicationCategory,
   ApplicationStatus,
   BusinessCriticality,
@@ -20,6 +26,13 @@ export async function getApplicationByExternalId(
   return dto ? toApplication(dto) : null;
 }
 
+export async function getApplicationLinks(
+  externalId: string,
+): Promise<ApplicationLink[]> {
+  const dtos = await fetchApplicationLinks(externalId);
+  return toApplicationLinks(dtos, externalId);
+}
+
 /** Sentinel option in the Portfolio filter that matches Applications with `portfolio === null`. */
 export const PORTFOLIO_NONE = "__none__";
 
@@ -31,6 +44,15 @@ export type Filters = {
   portfolios?: string[];
   operator?: string;
   businessCriticalities?: BusinessCriticality[];
+  /** Business Capability ids **already expanded to their descendants** by the
+   * caller (see `expandSelection`). Deliberately named apart from
+   * `FilterValue.businessCapabilityIds`, which holds only what the user
+   * actually checked: the two must never be confused, and the different name
+   * keeps `FilterValue` structurally assignable to `Filters`. */
+  businessCapabilityIdsExpanded?: Set<string>;
+  /** Data Object ids, same convention and same reasons as the capability set
+   * above. */
+  dataObjectIdsExpanded?: Set<string>;
 };
 
 export function filterApplications(
@@ -52,6 +74,24 @@ export function filterApplications(
       if (m.portfolio == null) {
         if (!f.portfolios.includes(PORTFOLIO_NONE)) return false;
       } else if (!f.portfolios.includes(m.portfolio.name)) {
+        return false;
+      }
+    }
+    if (f.businessCapabilityIdsExpanded?.size) {
+      // Many-to-many, unlike every other axis: an application matches as soon
+      // as one of its capabilities falls inside a checked node's subtree.
+      if (
+        !m.businessCapabilities.some((bc) =>
+          f.businessCapabilityIdsExpanded!.has(bc.id),
+        )
+      ) {
+        return false;
+      }
+    }
+    if (f.dataObjectIdsExpanded?.size) {
+      // Many-to-many like the capabilities: one data object inside a checked
+      // node's subtree is enough.
+      if (!m.dataObjects.some((d) => f.dataObjectIdsExpanded!.has(d.id))) {
         return false;
       }
     }

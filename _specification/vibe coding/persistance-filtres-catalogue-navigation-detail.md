@@ -30,8 +30,10 @@ Il faut donc différencier ces deux intentions : l'une **restaure** les filtres,
 - Si aucun filtre n'était appliqué, le comportement est identique à aujourd'hui (catalogue complet).
 
 #### 3. Menu « Catalogue » → réinitialisation
-- Le lien **« Catalogue »** du Header doit **toujours** afficher le catalogue **sans aucun filtre** (état par défaut), même si des filtres avaient été mémorisés.
-- Ce clic **efface** la mémorisation des filtres (un retour ultérieur via « Back to catalog » ne doit pas ré-appliquer d'anciens filtres effacés).
+> **Remplacé** par `filtres-partages-catalogue-carte-et-lien-clear.md` : le menu « Catalogue » n'efface plus rien, l'effacement passe par le lien « Clear All » du panneau. De même, la réponse « état en mémoire, perdu au rechargement » de la première Open Question est remplacée : les filtres sont désormais mémorisés en `sessionStorage` et partagés avec la carte.
+
+- ~~Le lien **« Catalogue »** du Header doit **toujours** afficher le catalogue **sans aucun filtre** (état par défaut), même si des filtres avaient été mémorisés.~~
+- ~~Ce clic **efface** la mémorisation des filtres (un retour ultérieur via « Back to catalog » ne doit pas ré-appliquer d'anciens filtres effacés).~~
 
 #### 4. Distinction claire des deux intentions
 - Les deux entrées mènent au catalogue mais avec des comportements opposés (restaurer vs effacer). La solution doit différencier sans ambiguïté « retour depuis le détail » et « accès via le menu ».

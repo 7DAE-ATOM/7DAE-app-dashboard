@@ -54,6 +54,25 @@ body {
   transition: background-color 0.2s ease, color 0.2s ease;
 }
 
+/*
+ * Always reserve the scrollbar gutter, even on pages short enough not to
+ * scroll. Without it, switching between a tall panel and a short one (the
+ * detail-page tabs: Identity / Accountability / In Context overflow, while
+ * Compliance and Documentation do not) adds or removes the scrollbar, which
+ * changes the viewport width by ~15px. Every `mx-auto` container then shifts
+ * sideways by half of that, so the hero image and the title visibly jump.
+ * Reserving the gutter keeps the layout width constant.
+ */
+html {
+  scrollbar-gutter: stable;
+}
+
+@supports not (scrollbar-gutter: stable) {
+  html {
+    overflow-y: scroll;
+  }
+}
+
 * {
   box-sizing: border-box;
 }
@@ -72,6 +91,25 @@ a {
 }
 
 /*
+ * Frosted panel. Lived under `.theme-map-first` while the map was its only
+ * user; the filter panel now wears it on the catalogue too, and a rule scoped
+ * to one route theme wouldn't apply there. Route themes carry what belongs to
+ * a route — this doesn't any more.
+ */
+.glass-panel {
+  background: color-mix(in srgb, var(--color-surface) 70%, transparent);
+  backdrop-filter: blur(20px) saturate(140%);
+  -webkit-backdrop-filter: blur(20px) saturate(140%);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  box-shadow: 0 12px 48px color-mix(in srgb, #000 40%, transparent);
+}
+
+[data-theme="light"] .glass-panel {
+  box-shadow: 0 12px 48px color-mix(in srgb, #0a0e1a 10%, transparent);
+}
+
+/*
  * Default focus ring for keyboard navigation. Applies to every interactive
  * element unless a component overrides it explicitly. Mouse focus stays
  * untouched (browser default) thanks to `:focus-visible`.
@@ -86,4 +124,25 @@ summary:focus-visible {
   outline: 2px solid var(--color-accent);
   outline-offset: 2px;
   border-radius: 4px;
+}
+
+/*
+ * Discover graph hover trace (components/discover/DiscoverGraph.tsx) —
+ * toggled imperatively on the DOM (not via React state), same technique as
+ * 7DAE-ltm-dashboard's /depgraph, so hovering never forces React Flow to
+ * re-measure node sizes.
+ */
+.react-flow__node,
+.react-flow__edge {
+  transition: opacity 150ms ease;
+}
+.react-flow__node.rf-dim {
+  opacity: 0.25;
+}
+.react-flow__edge.rf-dim {
+  opacity: 0.15;
+}
+.react-flow__edge.rf-emph .react-flow__edge-path {
+  stroke-width: 3px;
+  transition: stroke-width 150ms ease;
 }

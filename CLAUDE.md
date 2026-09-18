@@ -51,6 +51,16 @@ This is the single most important architectural idea and is easy to misread:
 
 When you change colors, the default is to edit `:root[data-theme="dark"]` / `:root[data-theme="light"]` in `app/globals.css`. Touch `styles/themes/*.css` only for structural overrides that cannot be expressed as tokens.
 
+### Persisted preferences — one factory, two tiers
+
+Every user preference kept in browser storage goes through **`lib/createPersistedStore.ts`**. The factory owns the plumbing that used to be copy-pasted per store: lazy hydration, a constant server snapshot, snapshot identity (`useSyncExternalStore` loops forever if `getSnapshot` mints a new object per read), forgiving persistence, and the cross-tab `storage` listener. Each store supplies only its key, storage level, default and a **`parse`** function — the per-preference validation stays explicit and must never collapse into a blind `JSON.parse`.
+
+The rule for the exception: a preference lives in the **DOM** (attribute on `<html>` + `MutationObserver`) **if and only if** it must be correct *before* hydration or be readable by CSS. Only two qualify — `lib/useTheme.ts` (`data-theme`) and `lib/catalogueDensity.ts` (`data-cat-cols` / `--cat-cols`), both written by the inline anti-FOUC script in `app/layout.tsx`. Anything else goes through the factory (`lib/discoverHighlightPanel.ts`, the Discover highlight panel's folded state, is the plainest example). `lib/discoverEdgeCurvature.ts` is neither: per-edge listeners, deliberately not persisted.
+
+Not every module store is a preference. `lib/discoverCanvasContents.ts` uses the same `useSyncExternalStore` shape without the factory, because what it holds is the *content of a canvas*, not a choice: session-only, never persisted. It exists so `DiscoverGraph` can publish upward without a prop — the graph is not memoized and is rendered directly by `DiscoverClient`, so routing this through the parent's state would re-render the graph on every canvas change.
+
+Storage level: `localStorage` for display preferences (they outlive the tab and sync across tabs), `sessionStorage` for the catalogue filters (`lib/appFilters.ts`) — a narrow filter forgotten since yesterday would look like an empty catalogue, and two tabs scoped differently is a legitimate use.
+
 ### Client/server boundary
 - Page-level files in `app/` stay server components; state, effects, and browser APIs move into a dedicated `Client` component (`CatalogueClient`, `MapClient`, `Header`, `ThemeToggle`).
 - `MapView` requires `window` (MapLibre) and is always imported via `dynamic(() => …, { ssr: false })` from `MapClient`. Keep it that way.

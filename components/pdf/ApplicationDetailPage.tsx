@@ -1,5 +1,5 @@
 import { Page, Text, View, Link } from "@react-pdf/renderer";
-import type { Application, Person } from "@/lib/types";
+import type { Application } from "@/lib/types";
 import {
   styles,
   colors,
@@ -220,15 +220,12 @@ export default function ApplicationDetailPage({ application: app, baseUrl }: Pro
         </View>
       </View>
 
-      {/* Zone 3 — Manager / Delegates / Solution Architect */}
+      {/* Zone 3 — Manager / Solution Architect */}
       <ManagerRow
         name={app.manager?.name ?? "Not set"}
         email={app.manager?.email}
         roleLabel="Application Manager"
       />
-      {app.managerDelegates.map((d: Person) => (
-        <ManagerRow key={d.email} name={d.name} email={d.email} roleLabel="Manager Delegate" />
-      ))}
       {app.solutionArchitect && (
         <ManagerRow
           name={app.solutionArchitect.name}

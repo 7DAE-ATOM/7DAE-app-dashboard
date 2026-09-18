@@ -1,6 +1,8 @@
 "use client";
 
 import clsx from "clsx";
+import ColumnsToggle from "@/components/ColumnsToggle";
+import { ALL_ROWS, ROW_OPTIONS, type Rows } from "@/lib/catalogueDensity";
 
 type Props = {
   page: number;
@@ -8,6 +10,11 @@ type Props = {
   pageSize: number;
   totalItems: number;
   onPageChange: (p: number) => void;
+  /** Rows per page — the other half of the density setting, see
+   * `lib/catalogueDensity.ts`. `pageSize` is `columns × rows`, or the whole
+   * filtered set when rows is `"all"`. */
+  rows: Rows;
+  onRowsChange: (r: Rows) => void;
 };
 
 function computePageSlots(
@@ -46,8 +53,12 @@ export default function Pagination({
   pageSize,
   totalItems,
   onPageChange,
+  rows,
+  onRowsChange,
 }: Props) {
-  if (totalPages <= 1) return null;
+  // No early return when there is a single page: the rows-per-page selector
+  // has to stay reachable, otherwise a user who set 6 rows and then filtered
+  // down to one page could never bring it back. Only the page buttons go.
   const start = (page - 1) * pageSize + 1;
   const end = Math.min(page * pageSize, totalItems);
   const slots = computePageSlots(page, totalPages);
@@ -63,10 +74,36 @@ export default function Pagination({
       aria-label="Pagination"
       className="mt-8 flex flex-wrap items-center justify-between gap-3"
     >
-      <div className="text-sm text-muted">
-        Showing {start}–{end} of {totalItems}
+      <div className="flex flex-wrap items-center gap-4">
+        <div className="text-sm text-muted" aria-live="polite">
+          Showing {start}–{end} of {totalItems}
+        </div>
+        <div className="flex items-center gap-2">
+          <label htmlFor="rows-per-page" className="text-sm text-muted">
+            Rows per page
+          </label>
+          <select
+            id="rows-per-page"
+            value={String(rows)}
+            onChange={(e) =>
+              onRowsChange(
+                e.target.value === ALL_ROWS ? ALL_ROWS : Number(e.target.value),
+              )
+            }
+            className="rounded border border-border bg-surface px-2 py-1 text-xs font-medium text-fg transition-colors hover:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+          >
+            {ROW_OPTIONS.map((n) => (
+              <option key={n} value={String(n)}>
+                {n === ALL_ROWS ? "All" : n}
+              </option>
+            ))}
+          </select>
+        </div>
+        {/* Reads and writes the density store on its own — the two display
+            controls simply sit side by side. */}
+        <ColumnsToggle />
       </div>
-      <div className="flex items-center gap-1">
+      <div className={clsx("flex items-center gap-1", totalPages <= 1 && "hidden")}>
         <button
           type="button"
           onClick={() => onPageChange(page - 1)}

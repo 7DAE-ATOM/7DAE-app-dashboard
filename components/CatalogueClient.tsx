@@ -1,32 +1,54 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useRef } from "react";
 import ApplicationCard from "@/components/ApplicationCard";
-import FilterBar, { type FilterValue } from "@/components/FilterBar";
+import type { FilterValue } from "@/components/FilterBar";
+import FilterPanel from "@/components/FilterPanel";
 import FilterSheet from "@/components/FilterSheet";
 import Pagination from "@/components/Pagination";
-import { filterApplications } from "@/lib/applications";
+import { useApplicationActions } from "@/components/useApplicationActions";
 import { useApplications } from "@/lib/useApplications";
+import { useFilteredApplications } from "@/lib/useFilteredApplications";
 import { usePageQuery } from "@/lib/usePageQuery";
 import {
+  COMPACT_COLUMNS,
+  setDensity,
+  useCatalogueDensity,
+} from "@/lib/catalogueDensity";
+import {
+  clearFilters,
   useCatalogueFilters,
   setCatalogueFilters,
   setCataloguePage,
-} from "@/lib/catalogueFilters";
-import { serializeFilters } from "@/lib/filterDescription";
+} from "@/lib/appFilters";
 
-const PAGE_SIZE = 6;
+/**
+ * Column count comes from `--cat-cols` on `<html>` (set before the first paint
+ * by the inline script in `app/layout.tsx`) rather than from a React-rendered
+ * inline style: no hydration mismatch, and no repaint of the whole grid once
+ * the stored preference is read. Below `lg` the setting is ignored — 8 cards
+ * per row on a phone is meaningless.
+ *
+ * The string must stay a literal: Tailwind's JIT scans source files, and the
+ * project has no safelist, so a template-built class would be purged.
+ */
+const GRID_CLASS =
+  "grid grid-cols-1 sm:grid-cols-2 gap-5 lg:[grid-template-columns:repeat(var(--cat-cols,5),minmax(0,1fr))]";
 
 function CatalogueSkeleton() {
+  const { columns, pageSize } = useCatalogueDensity();
+  // "All rows": the real count isn't known before the data lands, so fill a
+  // few rows — enough to cover the fold without painting hundreds of blocks.
+  const placeholders = Math.min(pageSize ?? columns * 4, 40);
   return (
-    <main className="px-4 md:px-6 py-8 max-w-[1600px] mx-auto">
-      <div className="grid lg:grid-cols-[280px_1fr] gap-6">
+    <main className="px-4 md:px-6 py-8">
+      <div className="grid lg:grid-cols-[340px_1fr] gap-6">
         <aside className="hidden lg:block">
           <div className="h-[400px] rounded-card bg-surface-2 skeleton-pulse" />
         </aside>
         <section>
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-5">
-            {Array.from({ length: 6 }).map((_, i) => (
+          <div className={GRID_CLASS}>
+            {Array.from({ length: placeholders }).map((_, i) => (
               <div key={i} className="rounded-card overflow-hidden">
                 <div className="aspect-[4/3] bg-surface-2 skeleton-pulse" />
                 <div className="px-4 pt-4 pb-3 space-y-2">
@@ -83,19 +105,45 @@ function CatalogueLoaded({
   businessCriticalities,
   portfolios,
 }: LoadedProps) {
-  // Filters live in an in-memory store (see lib/catalogueFilters) so they
-  // survive catalogue → detail → catalogue ("Back to catalog") and can be reset
-  // by the "Catalogue" menu, while being lost on reload.
-  const { filters } = useCatalogueFilters();
+  // Filters live in a shared store (see lib/appFilters) so they survive
+  // catalogue → detail → catalogue ("Back to catalog") and a reload of the
+  // tab, and are the same ones the map panel shows.
+  const { filters, resetToken } = useCatalogueFilters();
 
-  const visible = useMemo(
-    () => filterApplications(applications, filters),
-    [applications, filters],
-  );
+  const {
+    visible,
+    capabilityTree,
+    capabilityCounts,
+    dataObjectTree,
+    dataObjectCounts,
+    countUnder,
+  } =
+    useFilteredApplications(applications, filters);
 
-  const totalPages = Math.max(1, Math.ceil(visible.length / PAGE_SIZE));
+  const { columns, rows, pageSize } = useCatalogueDensity();
+  // "All rows" = a single page holding the whole filtered set. Resolving it to
+  // a concrete size here (rather than to Infinity in the store) keeps the
+  // `Showing 1–N of N` counter and the page arithmetic below honest.
+  const size = pageSize ?? Math.max(visible.length, 1);
+
+  const totalPages = Math.max(1, Math.ceil(visible.length / size));
   const { page, setPage } = usePageQuery(totalPages);
-  const paged = visible.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const paged = visible.slice((page - 1) * size, page * size);
+
+  // Changing the density must not throw the user back to page 1: land on the
+  // page that still holds the application that was at the top of the grid.
+  // `usePageQuery` clamps the result to `totalPages` on its own.
+  // Keyed on `pageSize` (the setting) and not on `size` (which also moves with
+  // the filters in "all" mode) so a filter change keeps going through the
+  // usual reset-to-page-1 path.
+  const prevSize = useRef(size);
+  useEffect(() => {
+    if (prevSize.current === size) return;
+    const firstIndex = (page - 1) * prevSize.current;
+    prevSize.current = size;
+    setPage(Math.floor(firstIndex / size) + 1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pageSize]);
 
   // Mirror the (URL-driven, clamped) page into the store so the detail page's
   // "Back to catalog" link can restore it via ?page=N.
@@ -108,74 +156,47 @@ function CatalogueLoaded({
     setPage(1);
   };
 
-  const [isExporting, setIsExporting] = useState(false);
-
-  const handleExportPdf = async () => {
-    if (visible.length === 0 || isExporting) return;
-    if (
-      visible.length === applications.length &&
-      !window.confirm(`Export all ${visible.length} applications as PDF?`)
-    ) {
-      return;
-    }
-    setIsExporting(true);
-    try {
-      const { pdf } = await import("@react-pdf/renderer");
-      const CatalogueExport = (await import("@/components/pdf/CatalogueExport"))
-        .default;
-      const blob = await pdf(
-        CatalogueExport({
-          applications: visible,
-          filtersDescription: serializeFilters(filters),
-          baseUrl: window.location.origin,
-        }),
-      ).toBlob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `application-export-${new Date().toISOString().slice(0, 10)}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-    } catch (e) {
-      alert(`Export failed: ${e instanceof Error ? e.message : String(e)}`);
-    } finally {
-      setIsExporting(false);
-    }
-  };
+  const { actions, dialog } = useApplicationActions({
+    applications,
+    visible,
+    filters,
+    capabilityTree,
+    dataObjectTree,
+  });
 
   return (
-    <main className="px-4 md:px-6 py-8 max-w-[1600px] mx-auto">
-      <div className="grid lg:grid-cols-[280px_1fr] gap-6">
+    <main className="px-4 md:px-6 py-8">
+      <div className="grid lg:grid-cols-[340px_1fr] gap-6">
         <aside className="hidden lg:block">
-          <div className="sticky top-[80px]">
-            <FilterBar
-              categories={categories}
-              statuses={statuses}
-              portfolios={portfolios}
-              businessCriticalities={businessCriticalities}
-              value={filters}
-              onChange={handleFiltersChange}
-            />
-            <div className="mt-4 text-xs text-muted font-mono">
-              {visible.length} / {applications.length} applications
-            </div>
-            <button
-              type="button"
-              onClick={handleExportPdf}
-              disabled={visible.length === 0 || isExporting}
-              className="mt-3 w-full text-xs font-mono px-3 py-2 rounded border border-border bg-surface hover:bg-accent/10 hover:text-accent disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            >
-              {isExporting ? "Generating PDF…" : `Export PDF (${visible.length})`}
-            </button>
-          </div>
+          <FilterPanel
+            className="sticky top-[80px]"
+            categories={categories}
+            statuses={statuses}
+            portfolios={portfolios}
+            businessCriticalities={businessCriticalities}
+            capabilityTree={capabilityTree}
+            capabilityCounts={capabilityCounts}
+            dataObjectTree={dataObjectTree}
+            dataObjectCounts={dataObjectCounts}
+            capabilityResetToken={resetToken}
+            actions={actions}
+            previewCount={countUnder}
+            value={filters}
+            onChange={handleFiltersChange}
+            onClear={clearFilters}
+            count={visible.length}
+            total={applications.length}
+          />
         </aside>
 
         <section>
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-5">
+          <div className={GRID_CLASS}>
             {paged.map((m) => (
-              <ApplicationCard key={m.id} application={m} />
+              <ApplicationCard
+                key={m.id}
+                application={m}
+                compact={columns >= COMPACT_COLUMNS}
+              />
             ))}
           </div>
           {visible.length === 0 && (
@@ -186,9 +207,11 @@ function CatalogueLoaded({
           <Pagination
             page={page}
             totalPages={totalPages}
-            pageSize={PAGE_SIZE}
+            pageSize={size}
             totalItems={visible.length}
             onPageChange={setPage}
+            rows={rows}
+            onRowsChange={(r) => setDensity({ rows: r })}
           />
         </section>
       </div>
@@ -198,10 +221,22 @@ function CatalogueLoaded({
         statuses={statuses}
         portfolios={portfolios}
         businessCriticalities={businessCriticalities}
+        capabilityTree={capabilityTree}
+        capabilityCounts={capabilityCounts}
+        dataObjectTree={dataObjectTree}
+        dataObjectCounts={dataObjectCounts}
+        capabilityResetToken={resetToken}
+        actions={actions}
+        previewCount={countUnder}
         value={filters}
         onChange={handleFiltersChange}
+        onClear={clearFilters}
         count={visible.length}
       />
+
+      {/* After the sheet, not before: both are `fixed z-50`, so DOM order is
+          what puts the dialog on top when the mobile sheet is open. */}
+      {dialog}
     </main>
   );
 }

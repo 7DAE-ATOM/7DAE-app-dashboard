@@ -1,17 +1,22 @@
 "use client";
 
+import { useState } from "react";
 import { useSearchParams, notFound } from "next/navigation";
 import Link from "next/link";
 import useSWR, { useSWRConfig } from "swr";
 import ApplicationHeader from "@/components/ApplicationHeader";
-import Gallery from "@/components/Gallery";
-import ManagerCard from "@/components/ManagerCard";
-import Section from "@/components/detail/Section";
+import Gallery, { type GalleryEmbedOverride } from "@/components/Gallery";
+import Tabs, { type TabItem } from "@/components/detail/Tabs";
+import IdentityTab from "@/components/detail/IdentityTab";
+import AccountabilityTab from "@/components/detail/AccountabilityTab";
+import ComplianceTab from "@/components/detail/ComplianceTab";
+import DocumentationTab from "@/components/detail/DocumentationTab";
+import DataTab from "@/components/detail/DataTab";
+import InContextTab from "@/components/detail/InContextTab";
 import { getApplicationByExternalId } from "@/lib/applications";
 import { SWR_KEY_APPLICATIONS } from "@/lib/useApplications";
-import { getCatalogueState } from "@/lib/catalogueFilters";
-import { PROVIDER_TYPE_LABELS } from "@/lib/labels";
-import type { Application } from "@/lib/types";
+import { getCatalogueState } from "@/lib/appFilters";
+import type { Application, LinkedResourceRef } from "@/lib/types";
 
 function DetailSkeleton() {
   return (
@@ -33,6 +38,9 @@ export default function ApplicationDetailClient() {
   const searchParams = useSearchParams();
   const externalId = searchParams.get("id") ?? "";
   const { cache } = useSWRConfig();
+  const [activeResource, setActiveResource] = useState<LinkedResourceRef | null>(
+    null,
+  );
 
   // Cache-first: if the catalogue/map already loaded the list, serve the item
   // from memory (no network). `fallbackData` makes SWR skip the fetch entirely.
@@ -57,6 +65,43 @@ export default function ApplicationDetailClient() {
   const backPage = getCatalogueState().page;
   const backHref = backPage > 1 ? `/?page=${backPage}` : "/";
 
+  const resourceOverride: GalleryEmbedOverride = activeResource
+    ? {
+        name: activeResource.name,
+        embedUrl: activeResource.embedUrl,
+        rawUrl: activeResource.url,
+      }
+    : null;
+
+  const tabs: TabItem[] = [
+    { id: "identity", label: "Identity", content: <IdentityTab application={app} /> },
+    {
+      id: "accountability",
+      label: "Accountability",
+      content: <AccountabilityTab application={app} />,
+    },
+    {
+      id: "compliance",
+      label: "Compliance",
+      content: <ComplianceTab application={app} />,
+    },
+    {
+      id: "documentation",
+      label: "Documentation",
+      content: <DocumentationTab application={app} />,
+    },
+    {
+      id: "data",
+      label: "DATA",
+      content: <DataTab application={app} />,
+    },
+    {
+      id: "in-context",
+      label: "In Context",
+      content: <InContextTab application={app} />,
+    },
+  ];
+
   return (
     <main className="px-4 md:px-8 py-8 max-w-[1400px] mx-auto">
       <Link
@@ -68,59 +113,22 @@ export default function ApplicationDetailClient() {
 
       <div className="grid lg:grid-cols-[1.4fr_1fr] gap-8">
         <div className="space-y-6">
-          <Gallery photos={app.photos} name={app.name} externalId={app.externalId} />
-          {app.description && (
-            <Section title="Description">
-              <p className="text-base leading-relaxed text-fg/90">
-                {app.description}
-              </p>
-            </Section>
-          )}
+          <Gallery
+            photos={app.photos}
+            name={app.name}
+            externalId={app.externalId}
+            resources={app.linkedResources}
+            activeResourceId={activeResource?.id ?? null}
+            onSelectResource={(resource) => setActiveResource(resource)}
+            resourceOverride={resourceOverride}
+            onPhotoSelect={() => setActiveResource(null)}
+          />
+          <Tabs items={tabs} />
         </div>
         <div className="space-y-6">
           <ApplicationHeader application={app} />
-          <Section title="Portfolio">
-            <p className="text-sm text-fg/90">
-              {app.portfolio ? app.portfolio.name : "No portfolio"}
-            </p>
-          </Section>
-          <Section title="Operator & Provider">
-            <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm max-w-detail-info">
-              <dt className="text-muted">Operator</dt>
-              <dd>{app.operator ?? "—"}</dd>
-              <dt className="text-muted">Provider type</dt>
-              <dd>{PROVIDER_TYPE_LABELS[app.providerType]}</dd>
-              <dt className="text-muted">Dept Provider</dt>
-              <dd>
-                {app.deptProviders.length > 0
-                  ? app.deptProviders.join(", ")
-                  : "—"}
-              </dd>
-              <dt className="text-muted">Version</dt>
-              <dd>{app.version ?? "—"}</dd>
-              <dt className="text-muted">Completion</dt>
-              <dd>{app.completion}%</dd>
-            </dl>
-          </Section>
         </div>
       </div>
-
-      {(app.manager || app.solutionArchitect) && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mt-8">
-          <ManagerCard
-            name={app.manager?.name ?? "Not set"}
-            email={app.manager?.email ?? ""}
-            roleLabel="Application Manager"
-          />
-          {app.solutionArchitect && (
-            <ManagerCard
-              name={app.solutionArchitect.name}
-              email={app.solutionArchitect.email}
-              roleLabel="Solution Architect"
-            />
-          )}
-        </div>
-      )}
     </main>
   );
 }

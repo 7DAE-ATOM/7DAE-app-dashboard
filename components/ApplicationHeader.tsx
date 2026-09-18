@@ -2,7 +2,9 @@ import type { Application } from "@/lib/types";
 import ChipCategory from "./ChipCategory";
 import BadgeStatus from "./BadgeStatus";
 import ChipBusinessCriticality from "./ChipBusinessCriticality";
+import { PICTOGRAM_SIZE } from "@/lib/pictogramSizes";
 import LifecycleSection from "./detail/LifecycleSection";
+import CompletionRing from "./CompletionRing";
 
 export default function ApplicationHeader({
   application,
@@ -25,11 +27,16 @@ export default function ApplicationHeader({
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
-        <ChipCategory category={m.category} withIcon />
-        <ChipBusinessCriticality level={m.businessCriticality} />
+        <ChipCategory category={m.category} size={PICTOGRAM_SIZE.detail} />
+        <ChipBusinessCriticality
+          level={m.businessCriticality}
+          size={PICTOGRAM_SIZE.detail}
+        />
       </div>
 
       <LifecycleSection lifecycle={m.lifecycle} />
+
+      <CompletionRing value={m.completion} caption="Completion" size={52} />
     </header>
   );
 }
