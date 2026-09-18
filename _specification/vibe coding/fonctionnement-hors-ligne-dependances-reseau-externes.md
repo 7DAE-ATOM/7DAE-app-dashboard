@@ -34,14 +34,16 @@ On sert ce que le tiers sert, sans vérification d'intégrité possible (une feu
 ### Règle générale
 - **Tout ce qui est statique est embarqué** dans le livrable : polices, tracé géographique. Rien n'est chargé depuis un domaine tiers, ni au premier affichage, ni plus tard.
 - Le **backend reste la seule origine réseau externe** à l'exécution. Les photos passent déjà par lui (`/api/infos/resource`), et c'est le modèle.
-- **Le registre npm n'est pas « Internet ».** La chaîne de build écrit un `.npmrc` depuis `config/.npmrc` avec les identifiants Artifactory, puis fait `npm install` avant `npm run build` (`Jenkinsfile`). Le dépôt visé est un **proxy du registre npm public**. Un paquet npm est donc une source d'approvisionnement légitime ; un téléchargement direct depuis un domaine public au moment du build ne l'est pas.
+- **Le registre npm n'est pas « Internet ».** La chaîne de build écrit un `.npmrc` depuis `config/.npmrc` avec les identifiants Artifactory, puis fait `npm install` avant `npm run build` (`Jenkinsfile`). Le dépôt visé est un **proxy du registre npm public**, et Artifactory relaie officiellement toute bibliothèque disponible sur un dépôt public. Un paquet npm est donc un canal d'approvisionnement légitime et sans friction ; un téléchargement direct depuis un domaine public au moment du build ne l'est pas. **C'est la frontière opérationnelle de cette spec** : ce qui peut arriver par npm arrive par npm, le reste est embarqué au dépôt.
 
 ### Polices
 - **Fraunces est importée et utilisée nulle part** : `--font-serif` vaut `Georgia` et aucun composant ne la référence. Elle est supprimée, pas embarquée.
+- **Le jeton `--font-serif` disparaît avec elle**, ainsi que l'entrée `serif` de `tailwind.config.ts`. Vérifié dans le livrable : Tailwind **n'émet aucune classe `.font-serif`**, rien ne l'écrit nulle part ; seule la variable CSS est expédiée, pour une trentaine d'octets. Le poids n'est donc pas l'argument — c'est que `"Georgia", serif` n'est pas un choix typographique mais un pari sur la machine du client : Georgia est présente sous Windows et macOS, absente de la plupart des distributions Linux et d'Android. Le jeton institutionnalise exactement le rendu dépendant du poste que cette spec s'emploie à supprimer, et il se lit comme une famille validée par le système de design — le prochain qui écrira `font-serif` héritera d'un rendu variable et non testé que personne n'a décidé. C'est le résidu d'une intention abandonnée (Fraunces), pas une réserve délibérée.
+- Aucun usage concurrent : l'export PDF s'appuie sur Helvetica et Courier, les polices intégrées au format (`components/pdf/styles.ts`), univers typographique indépendant du web et sans sérif. Si une sérif éditoriale devient un jour nécessaire, la réponse ne sera de toute façon pas Georgia mais une famille embarquée — le jeton se réécrira alors correctement, en une ligne.
 - **Graisses réellement employées**, relevées dans le code (et non reprises de l'import actuel) : Inter **400, 500, 600, 700** ; JetBrains Mono **400, 500**. La graisse Inter **300** est importée aujourd'hui sans aucun usage — elle disparaît aussi.
 - **Approvisionnement : les paquets npm `@fontsource/inter` et `@fontsource/jetbrains-mono`**, déclarés en dépendances. Ils contiennent les `.woff2` et leurs licences OFL. Conséquences : aucun binaire versionné au dépôt, aucune étape de téléchargement manuelle, aucune licence à recopier à la main, et une mise à jour qui redevient un `npm update` ordinaire.
-  - **À confirmer avant de coder** : que le proxy Artifactory sert bien ces deux paquets (`npm view @fontsource/inter version` avec le `.npmrc` en place). Un proxy « public » les a en principe ; s'il applique une liste blanche, cela se voit immédiatement.
-  - **Repli si le proxy ne suit pas** : télécharger les `.woff2` une fois en phase de développement — qui, elle, a accès à Internet — et les **versionner au dépôt** avec leurs textes de licence. Plus lourd à maintenir, mais fonctionnellement équivalent.
+  - **Disponibilité confirmée** : Artifactory relaie officiellement toute bibliothèque publiée sur un dépôt public, sans liste blanche à demander. `@fontsource/*` étant publié sur npm, l'approvisionnement ne pose pas de question et aucune démarche préalable n'est nécessaire.
+  - Repli documenté pour mémoire, s'il fallait un jour s'en passer : télécharger les `.woff2` en phase de développement — qui, elle, a accès à Internet — et les versionner au dépôt avec leurs textes de licence. Fonctionnellement équivalent, simplement plus lourd à maintenir.
 - **Le mécanisme de polices Google de Next (`next/font/google`) est explicitement écarté.** Il a l'air de résoudre le problème puisqu'il sert les fichiers depuis l'origine de l'application, mais il les **télécharge depuis `fonts.gstatic.com` pendant `next build`**. Il déplace la dépendance externe dans la chaîne de build au lieu de la supprimer.
 - **Le mécanisme de polices locales (`next/font/local`) est la voie retenue** : il ne fait que lire des fichiers présents sur le disque. C'est aussi ce qui règle le point technique déterminant — le build produit un export statique (`output: "export"`) servi derrière un `basePath`. Une règle `@font-face` écrite à la main dans `app/globals.css` devrait référencer les fichiers par une URL relative au CSS compilé, émis sous `_next/static/css/…` : chemin fragile, et qui ignore le préfixe d'URL de la passerelle. Le chargeur de polices, lui, émet les fichiers et réécrit les URL en tenant compte du `basePath`.
 - Les jetons `--font-sans` / `--font-mono` restent le point d'entrée unique côté styles : ils pointent vers les variables CSS produites par le chargeur. `tailwind.config.ts` n'a pas à changer, il lit déjà ces jetons.
@@ -53,6 +55,7 @@ On sert ce que le tiers sert, sans vérification d'intégrité possible (une feu
 - **Tout est déjà au dépôt** : `d3-geo`, `topojson-client` et **`world-atlas`** sont déjà des dépendances de développement, et `public/maps/` existe — vide. Vraisemblablement une tentative précédente. Le fond de carte ne demande donc **aucun téléchargement**, seulement d'être branché. `world-atlas` fournit `countries-110m.json` (105 Ko), `countries-50m.json` (739 Ko, très compressible) et `land-*.json`. **`50m` est le bon niveau** pour un rendu continental soigné ; une extraction restreinte à l'Europe au moment du build reste possible si le poids gêne.
 - **`maplibre-gl` et `react-map-gl` sortent des dépendances** : 803 Ko de JavaScript minifié et 65 Ko de CSS en moins, pour la seule page `/map`.
 - **Le thème clair/sombre devient trivial.** Aujourd'hui `MapView` choisit entre **deux styles CDN distincts** (`positron` / `dark-matter`) ; avec un SVG, c'est un `fill` qui lit les jetons de couleur existants. La carte s'accorde enfin réellement au reste de l'application au lieu de s'en approcher.
+- **Cadrage fixe, pas de déplacement ni de zoom.** Tant que `/map` n'affiche aucun marqueur, un cadrage arrêté sur l'Europe suffit : `d3-zoom` n'est pas introduit. C'est autant de moins à écrire, et la question se reposera d'elle-même le jour où des coordonnées arriveront — avec, à ce moment-là, un vrai besoin pour la trancher.
 - **Le jour où un vrai fond détaillé serait exigé** — zoomer sur le site de Toulouse et voir les bâtiments — aucun fichier embarqué ne suffira : il faudra un serveur de tuiles interne. C'est une décision d'infrastructure, pas un lot de développement, et elle reste hors périmètre.
 
 ### Documents Google — hors périmètre, et c'est une décision
@@ -71,7 +74,8 @@ On sert ce que le tiers sert, sans vérification d'intégrité possible (une feu
 ## Requirements
 
 ### Functional Requirements
-- Aucune requête vers un domaine tiers n'est émise lors de la navigation sur `/`, `/map`, `/discover` et la page de détail, à la seule exception d'une `iframe` Google ouverte par l'utilisateur.
+- Aucune requête vers un domaine tiers n'est émise **du fait de l'application elle-même** lors de la navigation sur `/`, `/map`, `/discover` et la page de détail.
+- **Les ressources désignées par les données continuent de fonctionner à l'identique.** Un `documentRef.url` remonté par le backend reste affichable en `iframe` et ouvrable dans un nouvel onglet. La distinction est celle du *commanditaire* de la requête : l'application ne doit rien aller chercher pour son propre compte ; ce que l'utilisateur demande à consulter n'est pas concerné, et ne doit surtout pas être restreint au nom de cette spec.
 - Les typographies affichées sont celles d'aujourd'hui, y compris les graisses employées et les chiffres tabulaires, sans accès à Internet.
 - `/map` affiche un fond de carte exploitable hors ligne, cohérent en thème clair et sombre.
 - Le reste de l'application (catalogue, filtres, Discover, exports, photos) fonctionne à l'identique.
@@ -87,13 +91,13 @@ On sert ce que le tiers sert, sans vérification d'intégrité possible (une feu
 ## Scope
 
 ### In Scope
-- Suppression de l'import Google Fonts et embarquement d'Inter et JetBrains Mono aux graisses utilisées ; suppression de Fraunces et de la graisse Inter 300.
+- Suppression de l'import Google Fonts et embarquement d'Inter et JetBrains Mono aux graisses utilisées ; suppression de Fraunces, de la graisse Inter 300, et du jeton `--font-serif` avec son entrée Tailwind.
 - Remplacement du fond de carte CARTO par un rendu géographique local, et retrait de `maplibre-gl` / `react-map-gl`.
 - Correctif du script `npm start`.
 - Garde-fou automatisé de non-régression sur les URL externes.
 
 ### Out of Scope
-- **Le repli d'affichage des documents Google** : exception assumée, traitée ailleurs si besoin.
+- **Le repli d'affichage des documents Google** : exception assumée, traitée ailleurs si besoin. Hors périmètre signifie ici *inchangé*, pas *supprimé*.
 - Toute évolution fonctionnelle de la carte (marqueurs, regroupement par site, géocodage) : le sujet est la disponibilité du fond, pas la donnée.
 - Un serveur de tuiles interne, et tout fond de carte détaillé qui en dépendrait.
 - Le cache hors ligne des données applicatives : les appels au backend restent des appels au backend.
@@ -102,12 +106,12 @@ On sert ce que le tiers sert, sans vérification d'intégrité possible (une feu
 - Les liens sortants ouverts volontairement dans un nouvel onglet : ils ne cassent pas l'application.
 
 ## Affected Areas
-- **Modifier** — `app/globals.css` : l'`@import` de la ligne 1 disparaît ; `--font-sans` / `--font-mono` pointent vers les variables du chargeur de polices ; le sort de `--font-serif` est à trancher (voir Open Questions).
+- **Modifier** — `app/globals.css` : l'`@import` de la ligne 1 disparaît ; `--font-sans` / `--font-mono` pointent vers les variables du chargeur de polices ; `--font-serif` (ligne 12) est supprimée.
 - **Modifier** — `app/layout.tsx` : point d'entrée naturel pour déclarer les polices locales et les appliquer au document, à côté des scripts anti-FOUC de thème et de densité déjà présents.
 - **Réécrire** — `components/MapView.tsx` : 39 lignes aujourd'hui, dont l'essentiel de la logique tient dans le choix du style CDN. Le rendu SVG le remplace intégralement.
 - **Modifier** — `package.json` : ajout de `@fontsource/*`, retrait de `maplibre-gl` et `react-map-gl`, promotion de `d3-geo` / `topojson-client` / `world-atlas` en dépendances de production si le rendu les exige à l'exécution, et correctif du script `start`.
 - **À exploiter** — `public/maps/`, prévu et vide.
-- **Vérifier** — `tailwind.config.ts` : la pile `fontFamily` référence les mêmes jetons et doit rester cohérente.
+- **Modifier** — `tailwind.config.ts` : l'entrée `serif` de `fontFamily` (ligne 26) est supprimée ; les piles `sans` et `mono` référencent les mêmes jetons et doivent rester cohérentes.
 - **Non touché** — `lib/atom-api.ts` et `lib/usePhoto.ts` : ils ne parlent qu'au backend, ce qui est le comportement visé. `lib/google-embed.ts` et `components/Gallery.tsx` : hors périmètre par décision.
 
 ## Edge Cases
@@ -115,21 +119,23 @@ On sert ce que le tiers sert, sans vérification d'intégrité possible (une feu
 - **Graisses manquantes** : le code emploie `font-medium`, `font-semibold` et `font-bold`. N'embarquer qu'un sous-ensemble ferait synthétiser les autres par le navigateur, au rendu gras approximatif.
 - **Chiffres tabulaires** : les compteurs de filtres reposent sur `tabular-nums`. La variante embarquée doit le supporter, sinon les nombres se remettent à sautiller.
 - **Première peinture** : les scripts anti-FOUC de thème et de densité s'exécutent avant l'hydratation ; l'arrivée des polices ne doit pas introduire un nouveau saut de mise en page.
+- **Zèle du garde-fou** : une vérification qui interdirait *toute* URL externe dans le livrable signalerait `lib/google-embed.ts`, dont les gabarits `docs.google.com` / `drive.google.com` sont compilés dans le bundle. Les faire disparaître casserait l'affichage des documents. La liste d'exceptions n'est donc pas une commodité : elle fait partie de la définition du garde-fou.
 - **Régression invisible** : le navigateur client étant connecté, une dépendance externe réintroduite plus tard **fonctionnera** et ne se signalera jamais en recette. C'est l'argument central en faveur d'un garde-fou automatisé plutôt que d'une vigilance humaine.
 - **Reprise involontaire de `next/font/google`** : casse le build, sans que le code paraisse fautif. La vérification doit savoir l'attraper.
 - **Cache navigateur** : un poste ayant déjà chargé les polices ou les tuiles peut donner l'illusion que l'embarquement fonctionne. Les vérifications se font **cache vidé**.
 - **Tracé du monde trop grossier** en `110m` sur un cadrage européen : frontières visiblement anguleuses. C'est ce qui motive `50m` par défaut.
-- **Projection** : le cadrage actuel (longitude 5, latitude 47, zoom 3.5) n'a pas d'équivalent direct en `d3-geo`. Le cadrage cible est à définir à la main, et à revalider quand des marqueurs apparaîtront.
+- **Projection** : le cadrage actuel (longitude 5, latitude 47, zoom 3.5) n'a pas d'équivalent direct en `d3-geo`. Le cadrage cible est à définir à la main — une fois pour toutes, puisqu'il est fixe — et à revalider quand des marqueurs apparaîtront.
 
 ## Open Questions
-- **`--font-serif`** : aucune famille sérif n'est utilisée. On garde le jeton sur `Georgia` — police système, sans coût — ou on le supprime avec Fraunces, ainsi que l'entrée `serif` de `tailwind.config.ts` ?
-- **Déplacement et zoom sur `/map`** : le fond local en a-t-il besoin dès maintenant (`d3-zoom`), ou un cadrage fixe sur l'Europe suffit-il tant que la page n'affiche aucun marqueur ?
+
+Aucune.
 
 ## Acceptance Criteria
 - [ ] Navigateur en mode hors ligne (backend simulé joignable), cache vidé : `/`, `/map`, `/discover` et la page de détail se chargent sans aucune requête vers un domaine tiers.
 - [ ] Les textes s'affichent dans les typographies prévues, y compris les graisses employées et les chiffres tabulaires.
 - [ ] Aucune référence à `fonts.googleapis.com`, `fonts.gstatic.com` ou `basemaps.cartocdn.com` ne subsiste dans les sources **ni dans `out/`**.
 - [ ] Ni Fraunces ni la graisse Inter 300 ne sont chargées.
+- [ ] Aucune trace de `--font-serif` ni de l'entrée `serif` de Tailwind ne subsiste, et aucun écran n'a changé d'apparence — rien ne les utilisait.
 - [ ] `/map` affiche un fond de carte hors ligne, lisible et cohérent en thème clair et sombre.
 - [ ] `maplibre-gl` et `react-map-gl` ne figurent plus dans `package.json`, et le poids du livrable a baissé.
 - [ ] Polices et carte se chargent correctement **derrière la passerelle AFTER**, avec le `basePath` en place.
