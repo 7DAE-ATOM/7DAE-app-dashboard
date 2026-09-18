@@ -3,7 +3,7 @@ app:
   replicaCount: 1
 
   image:
-    name: "r-2k77-devops-docker-releases-local.artifactory.fr.eu.airbus.corp/transversal/ltm-dashboard"
+    name: "r-2k77-devops-docker-releases-local.artifactory.fr.eu.airbus.corp/transversal/app-dashboard"
     tag: "0.1.0"
     pullPolicy: Always
     pullSecret:
@@ -13,7 +13,7 @@ app:
   service:
     port: 8080
 
-  baseHref: /atom-ltm-dashboard
+  baseHref: /atom-app-dashboard
 
   requests:
     memory: "256Mi"
@@ -25,14 +25,14 @@ app:
   probes:
     liveness:
       enabled: true
-      url: /atom-ltm-dashboard/health
+      url: /atom-app-dashboard/health
       initialDelaySeconds: 10
       timeoutSeconds: 2
       failureThreshold: 3
       periodSeconds: 10
     readiness:
       enabled: true
-      url: /atom-ltm-dashboard/health
+      url: /atom-app-dashboard/health
       initialDelaySeconds: 5
       timeoutSeconds: 2
       failureThreshold: 3

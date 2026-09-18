@@ -32,7 +32,7 @@ type Props = {
  * Save / Load controls for the Discover toolbar: a floppy button that writes
  * to the active save in one click, and a "…" menu carrying the five actions.
  *
- * Ported from `/depgraph`'s `SaveLoadControls` in the sibling `ltm-dashboard`
+ * Ported from `/depgraph`'s `SaveLoadControls` in the sibling `app-dashboard`
  * — same wording, same modals, same rules (empty name refused, existing name
  * silently overwritten, delete without confirmation) so the two pages don't
  * grow two vocabularies for the same job. The dressing follows this repo's
