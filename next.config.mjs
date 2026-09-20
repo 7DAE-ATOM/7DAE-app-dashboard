@@ -42,8 +42,8 @@ const nextConfig = {
   // In dev we keep the full Next.js server.
   output: isProd ? "export" : undefined,
   // trailingSlash makes every generated link and exported page use the
-  // slash-terminated form (`/atom-ltm-dashboard/`, `/atom-ltm-dashboard/map/`).
-  // Behind the AFTER gateway, the bare basePath (`/atom-ltm-dashboard`, no slash)
+  // slash-terminated form (`/atom-app-dashboard/`, `/atom-app-dashboard/map/`).
+  // Behind the AFTER gateway, the bare basePath (`/atom-app-dashboard`, no slash)
   // triggers an upstream directory redirect that wrongly carries the backend port
   // (`https://host:8080/…`) and fails; the slash form works. Forcing the slash
   // means the logo/nav and any reload land on the working URL.

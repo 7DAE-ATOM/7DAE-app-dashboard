@@ -132,7 +132,7 @@ summary:focus-visible {
 /*
  * Discover graph hover trace (components/discover/DiscoverGraph.tsx) —
  * toggled imperatively on the DOM (not via React state), same technique as
- * 7DAE-ltm-dashboard's /depgraph, so hovering never forces React Flow to
+ * 7DAE-app-dashboard's /depgraph, so hovering never forces React Flow to
  * re-measure node sizes.
  */
 .react-flow__node,
