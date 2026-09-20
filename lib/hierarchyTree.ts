@@ -118,6 +118,36 @@ export function expandSelection(
 }
 
 /**
+ * The given ids plus every ancestor of each — the set to **show** when a tree
+ * is restricted to a handful of nodes.
+ *
+ * The mirror of `subtreeIds`, and the reason it exists: dropping the
+ * intermediate nodes would turn the tree into a flat list, where nothing says
+ * which domain a leaf belongs to and two same-named leaves under different
+ * parents become indistinguishable. An ancestor kept this way is there to
+ * situate, not because anything about it matched.
+ *
+ * The `byId.size` bound makes the walk terminate even on a parent chain that
+ * loops — `buildHierarchyTree` breaks cycles, but this must hold on its own.
+ */
+export function withAncestors(
+  tree: HierarchyTree | null,
+  ids: Iterable<string>,
+): Set<string> {
+  const result = new Set<string>();
+  if (!tree) return result;
+  for (const id of ids) {
+    let current: string | null | undefined = id;
+    for (let guard = 0; current && guard <= tree.byId.size; guard++) {
+      if (result.has(current)) break;
+      result.add(current);
+      current = tree.byId.get(current)?.parentId ?? null;
+    }
+  }
+  return result;
+}
+
+/**
  * How many applications each node would bring in — the count shown next to
  * its label.
  *

@@ -14,6 +14,7 @@ import DiscoverExportMenu, {
 } from "@/components/discover/DiscoverExportMenu";
 import DiscoverViewModeToggle from "@/components/discover/DiscoverViewModeToggle";
 import DiscoverInfoIconsToggle from "@/components/discover/DiscoverInfoIconsToggle";
+import DataObjectColorsSync from "@/components/discover/DataObjectColorsSync";
 import DiscoverHighlightPanel from "@/components/discover/DiscoverHighlightPanel";
 import DiagramSaveControls from "@/components/discover/DiagramSaveControls";
 import type {
@@ -374,6 +375,9 @@ export default function DiscoverClient() {
               graphRef={graphRef}
               applicationsById={applicationsById}
             />
+            {/* Renders nothing: it publishes the data-object palette, which
+                has to survive the panel being folded. */}
+            <DataObjectColorsSync />
             {/* top-14: below the graph's own seed loading/error strip. */}
             {seedExpired && !expiredDismissed && (
               <div className="absolute left-1/2 top-14 z-10 flex -translate-x-1/2 items-center gap-3 rounded border border-border bg-surface px-3 py-2 text-xs text-muted shadow-lg">

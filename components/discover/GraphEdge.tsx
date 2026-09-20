@@ -15,6 +15,7 @@ import {
   setEdgeCurvature,
   useEdgeCurvature,
 } from "@/lib/discoverEdgeCurvature";
+import { useDataObjectColors } from "@/lib/discoverDataObjectLegend";
 
 export type GraphEdgeData = {
   sx: number;
@@ -28,6 +29,10 @@ export type GraphEdgeData = {
    * on purpose: which way an edge bows and whether it has a twin are two
    * different facts, and only the second one justifies a minimum gap. */
   parallel: boolean;
+  /** What flows along this arrow — the data objects of the interface it
+   * targets, or the union of the folded ones in the simplified view. Built by
+   * `DiscoverGraph`'s `edges` memo, deduplicated and sorted by name. */
+  dataObjects: { id: string; name: string }[];
 };
 
 /** The historical curvature: the control point sits this fraction of the
@@ -41,6 +46,20 @@ const MAX_CURVE = 60;
 const MIN_GAP = 6;
 /** Hit area of the invisible hover path, in graph pixels. */
 const HOVER_WIDTH = 20;
+/** Data-object dots. Radius and spacing are in **graph** pixels, not divided
+ * by the zoom: unlike the curvature handle, these are part of the diagram and
+ * must scale with it — which is also what makes them come out right in the
+ * PNG/SVG export. */
+const DOT_RADIUS = 5;
+const DOT_SPACING = 13;
+/** Past this, a row of dots stops being readable and spills over the
+ * neighbouring nodes; the rest is announced by a "+N" marker rather than
+ * silently dropped. */
+const MAX_DOTS = 6;
+/** The dots stay inside this slice of the curve, so they never ride up onto a
+ * node or under the arrow head. On a short arrow they close up instead of
+ * overflowing. */
+const DOT_SPAN = 0.6;
 /** Grace period before the handle goes away, so the pointer can travel from
  * the (thin) line to the handle without losing it. */
 const HIDE_DELAY_MS = 250;
@@ -58,6 +77,9 @@ const HIDE_DELAY_MS = 250;
 export default function GraphEdge({ id, data, markerEnd, style }: EdgeProps) {
   const { edgeCurvature } = useDiscoverDisplaySettings();
   const override = useEdgeCurvature(id);
+  // `null` as long as the legend is off — then this edge renders exactly what
+  // it rendered before the feature existed.
+  const dataObjectColors = useDataObjectColors();
   const { screenToFlowPosition } = useReactFlow();
   const { zoom } = useViewport();
 
@@ -94,6 +116,52 @@ export default function GraphEdge({ id, data, markerEnd, style }: EdgeProps) {
   // line on strongly bowed edges.
   const handleX = mx + nx * (offset / 2);
   const handleY = my + ny * (offset / 2);
+
+  /** Point of the quadratic bezier at `t` — the same curve the path draws, so
+   * a dot sits on the line whatever the curvature, global or manual. */
+  function pointAt(t: number): { x: number; y: number } {
+    const u = 1 - t;
+    return {
+      x: u * u * d.sx + 2 * u * t * cx + t * t * d.tx,
+      y: u * u * d.sy + 2 * u * t * cy + t * t * d.ty,
+    };
+  }
+
+  /** The coloured dots to draw, already placed. Data objects the loaded
+   * hierarchy doesn't know are dropped first: no dot without a legend entry
+   * to read it by. */
+  const dots = (() => {
+    if (!dataObjectColors) return [];
+    const carried = d.dataObjects.filter((o) => dataObjectColors.has(o.id));
+    if (carried.length === 0) return [];
+
+    const shown = carried.slice(0, MAX_DOTS);
+    const hidden = carried.slice(MAX_DOTS);
+    const slots = shown.length + (hidden.length > 0 ? 1 : 0);
+    // Constant spacing in graph pixels, then squeezed so the whole row stays
+    // within its slice of a short arrow rather than spilling past its ends.
+    const step =
+      slots > 1 ? Math.min(DOT_SPACING / len, DOT_SPAN / (slots - 1)) : 0;
+    const first = 0.5 - (step * (slots - 1)) / 2;
+
+    const placed = shown.map((o, i) => ({
+      key: o.id,
+      ...pointAt(first + step * i),
+      fill: dataObjectColors.get(o.id)!,
+      title: o.name,
+      label: null as string | null,
+    }));
+    if (hidden.length > 0) {
+      placed.push({
+        key: "overflow",
+        ...pointAt(first + step * shown.length),
+        fill: "var(--color-muted)",
+        title: hidden.map((o) => o.name).join(", "),
+        label: `+${hidden.length}`,
+      });
+    }
+    return placed;
+  })();
 
   function show() {
     if (hideTimer.current) clearTimeout(hideTimer.current);
@@ -166,6 +234,47 @@ export default function GraphEdge({ id, data, markerEnd, style }: EdgeProps) {
         onPointerEnter={show}
         onPointerLeave={scheduleHide}
       />
+      {/* What flows along this arrow. Drawn inside the edge's own group, so
+          the highlight's `.rf-dim` dims them with it and the image export
+          captures them without knowing they exist.
+
+          They answer the hover like the path underneath does: without it,
+          moving onto a dot would read as leaving the line and would make the
+          curvature handle — which sits at the very same midpoint — fade away
+          under the pointer. The handle stays the last sibling, so it keeps
+          winning hit-testing where they overlap. */}
+      {dots.map((dot) => (
+        <g
+          key={dot.key}
+          onPointerEnter={show}
+          onPointerLeave={scheduleHide}
+          pointerEvents="all"
+        >
+          <circle
+            cx={dot.x}
+            cy={dot.y}
+            r={DOT_RADIUS}
+            fill={dot.fill}
+            stroke="var(--color-bg)"
+            strokeWidth={1.5}
+          >
+            <title>{dot.title}</title>
+          </circle>
+          {dot.label && (
+            <text
+              x={dot.x}
+              y={dot.y}
+              textAnchor="middle"
+              dominantBaseline="central"
+              pointerEvents="none"
+              fill="var(--color-bg)"
+              style={{ fontSize: 6, fontWeight: 700 }}
+            >
+              {dot.label}
+            </text>
+          )}
+        </g>
+      ))}
       {(hovered || dragging) && (
         // Drawn in the edge's own SVG group, right after the hover path, and
         // not through `EdgeLabelRenderer`: that renderer's container is painted

@@ -183,16 +183,25 @@ function centerOf(node: Node, byId: Map<string, Node>): { x: number; y: number }
 function collapseToApplications(
   edgeMeta: DiscoverEdge[],
   providerOf: (interfaceId: string) => string | undefined,
-): { sourceId: string; targetId: string }[] {
-  const seen = new Set<string>();
-  const result: { sourceId: string; targetId: string }[] = [];
+): { sourceId: string; targetId: string; interfaceIds: string[] }[] {
+  const byPair = new Map<string, { sourceId: string; targetId: string; interfaceIds: string[] }>();
+  const result: { sourceId: string; targetId: string; interfaceIds: string[] }[] = [];
   for (const e of edgeMeta) {
     const targetId = providerOf(e.interfaceId);
     if (!targetId || targetId === e.consumerId) continue;
     const key = `${e.consumerId}|${targetId}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    result.push({ sourceId: e.consumerId, targetId });
+    const existing = byPair.get(key);
+    if (existing) {
+      // Which interfaces a folded flow stands for: the arrow has to carry
+      // the union of what they transport (see the `edges` memo).
+      if (!existing.interfaceIds.includes(e.interfaceId)) {
+        existing.interfaceIds.push(e.interfaceId);
+      }
+      continue;
+    }
+    const entry = { sourceId: e.consumerId, targetId, interfaceIds: [e.interfaceId] };
+    byPair.set(key, entry);
+    result.push(entry);
   }
   return result;
 }
@@ -1201,9 +1210,11 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
       // can't disagree. Both ends re-checked so a pruning race can't leave a
       // dangling link.
       edges: simplified
-        ? collapseToApplications(edgeMetaRef.current, providerOf).filter(
-            (e) => present.has(e.sourceId) && present.has(e.targetId),
-          )
+        ? collapseToApplications(edgeMetaRef.current, providerOf)
+            .filter((e) => present.has(e.sourceId) && present.has(e.targetId))
+            // The folded interfaces are geometry for the canvas, not part of
+            // the exported topology.
+            .map(({ sourceId, targetId }) => ({ sourceId, targetId }))
         : edgeMetaRef.current
             .filter((e) => present.has(e.consumerId) && present.has(e.interfaceId))
             .map((e) => ({ sourceId: e.consumerId, targetId: e.interfaceId })),
@@ -1222,6 +1233,21 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
   const edges = useMemo<Edge[]>(() => {
     const byId = new Map(nodes.map((n) => [n.id, n]));
 
+    /** What an interface transports, ready to be hung on an arrow. Already
+     * loaded with the graph — nothing is fetched for this. Sorted by name so
+     * the dots come out in the same order on every arrow that carries the
+     * same data. */
+    const dataObjectsOf = (interfaceIds: string[]) => {
+      const byDataObject = new Map<string, { id: string; name: string }>();
+      for (const interfaceId of interfaceIds) {
+        const data = byId.get(interfaceId)?.data as unknown as InterfaceNodeData | undefined;
+        for (const o of data?.dataObjects ?? []) {
+          if (!byDataObject.has(o.id)) byDataObject.set(o.id, { id: o.id, name: o.name });
+        }
+      }
+      return [...byDataObject.values()].sort((a, b) => a.name.localeCompare(b.name));
+    };
+
     if (simplified) {
       // Grouped by *unordered* pair so that A → B and B → A bend apart
       // instead of landing on the exact same line.
@@ -1238,7 +1264,7 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
         const pair = [sourceId, targetId].sort().join("|");
         totalPerPair.set(pair, (totalPerPair.get(pair) ?? 0) + 1);
       }
-      for (const { sourceId, targetId } of collapsed) {
+      for (const { sourceId, targetId, interfaceIds } of collapsed) {
         const source = byId.get(sourceId);
         const target = byId.get(targetId);
         if (!source || !target) continue;
@@ -1261,6 +1287,9 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
             ty: to.y,
             bend: rank % 2 === 0 ? 1 : -1,
             parallel: (totalPerPair.get(pair) ?? 1) > 1,
+            // The union of what every folded interface carries — the only
+            // reading consistent with what this arrow stands for on screen.
+            dataObjects: dataObjectsOf(interfaceIds),
           } satisfies GraphEdgeData,
           markerEnd: { type: MarkerType.ArrowClosed, color: "var(--color-accent)" },
           style: { stroke: "var(--color-accent)" },
@@ -1296,6 +1325,10 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
             ty: to.y,
             bend: i % 2 === 0 ? 1 : -1,
             parallel: group.length > 1,
+            // What the targeted interface transports. Two consumers of the
+            // same interface therefore carry the same dots — the same data
+            // flowing twice, not a duplicate to fix.
+            dataObjects: dataObjectsOf([e.interfaceId]),
           } satisfies GraphEdgeData,
           markerEnd: { type: MarkerType.ArrowClosed, color: "var(--color-accent)" },
           style: { stroke: "var(--color-accent)" },

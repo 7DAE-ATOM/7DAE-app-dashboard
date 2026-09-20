@@ -17,6 +17,16 @@ type Props = {
    * filtering time, not here: the UI never auto-checks children. */
   value: string[];
   onChange: (ids: string[]) => void;
+  /** Show only these nodes, **ancestors included** — the caller builds the
+   * set (see `withAncestors`), because it is the only one that knows what it
+   * is restricting to. `null`/absent means no restriction, which is not the
+   * same as an empty set: an empty one shows nothing, and that is a legitimate
+   * answer. */
+  restrictTo?: ReadonlySet<string> | null;
+  /** A coloured dot beside the label, for the ids present here and no others
+   * — which is what leaves a kept ancestor bare without a rule of its own.
+   * See `lib/dataObjectColors.ts`. */
+  dots?: ReadonlyMap<string, string>;
 };
 
 /** Nodes matching `query`, plus every ancestor of a match so the paths stay
@@ -63,13 +73,24 @@ export default function HierarchyTreeFilter({
   counts,
   value,
   onChange,
+  restrictTo = null,
+  dots,
 }: Readonly<Props>) {
   const [query, setQuery] = useState("");
   // Kept apart from the paths a search force-opens, so clearing the search
   // restores exactly what the user had opened.
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
-  const visible = useMemo(() => visibleNodeIds(tree, query), [tree, query]);
+  const matching = useMemo(() => visibleNodeIds(tree, query), [tree, query]);
+  // The two restrictions compose: searching inside an already restricted tree
+  // searches what is left of it, not the whole hierarchy.
+  const visible = useMemo(() => {
+    if (!restrictTo) return matching;
+    if (!matching) return restrictTo;
+    const both = new Set<string>();
+    for (const id of matching) if (restrictTo.has(id)) both.add(id);
+    return both;
+  }, [matching, restrictTo]);
   const checked = useMemo(() => new Set(value), [value]);
 
   const toggleExpanded = (id: string) => {
@@ -130,7 +151,23 @@ export default function HierarchyTreeFilter({
             >
               {node.name}
             </span>
-            <span className="ml-auto shrink-0 text-[11px] font-mono text-muted">{count}</span>
+            {/* The legend of the dots drawn on the diagram's flows: same
+                colour, same data object. Absent on a node nothing carries. */}
+            {dots?.get(node.id) && (
+              <span
+                aria-hidden
+                className="ml-auto block h-2.5 w-2.5 shrink-0 rounded-full"
+                style={{ background: dots.get(node.id) }}
+              />
+            )}
+            <span
+              className={clsx(
+                "shrink-0 text-[11px] font-mono text-muted",
+                !dots?.get(node.id) && "ml-auto",
+              )}
+            >
+              {count}
+            </span>
           </label>
         </div>
         {isOpen && <ul>{node.children.map((child) => renderNode(child, depth + 1))}</ul>}
