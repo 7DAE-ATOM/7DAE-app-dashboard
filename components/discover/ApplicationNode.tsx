@@ -8,6 +8,12 @@ import ResizeHorizontalIcon from "@/components/icons/ResizeHorizontalIcon";
 import InfoIcon from "@/components/icons/InfoIcon";
 import { useApplicationInfo } from "./ApplicationInfoContext";
 import ApplicationInfoCard from "./ApplicationInfoCard";
+import CapabilityPie from "./CapabilityPie";
+import { useCapabilityColors } from "@/lib/discoverCapabilityLegend";
+
+/** Half the rectangle's height, so the disc sits in the middle band and
+ * clears the info button's corner. */
+const PIE_SIZE = APP_NODE_HEIGHT / 2;
 
 export type ApplicationNodeData = {
   name: string;
@@ -90,14 +96,34 @@ export default function ApplicationNode({
   const settings = useDiscoverDisplaySettings();
   const { openApplicationIds, toggle, closeApplication, resolveApplication } =
     useApplicationInfo();
+  const capabilityColors = useCapabilityColors();
   const width = data.width ?? APP_NODE_WIDTH;
   const infoOpen = openApplicationIds.has(id);
+
+  /** The capabilities this application declares, in the legend's colours.
+   * Resolved through the context that already serves the identity card, so
+   * nothing is added to the node's data and React Flow never re-measures.
+   * Empty — no capability, or an application outside the loaded catalogue —
+   * means no pie at all: an empty disc would read as an unknown coverage
+   * rather than as none. */
+  const slices = capabilityColors
+    ? (resolveApplication(id)?.businessCapabilities ?? [])
+        .filter((c) => capabilityColors.has(c.id))
+        // Sorted so two applications covering the same capabilities show the
+        // same succession of colours.
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map((c) => ({ id: c.id, name: c.name, color: capabilityColors.get(c.id)! }))
+    : [];
+
   return (
     <div
       className="relative flex flex-col justify-center rounded-card border bg-surface px-3 py-2 shadow-sm"
       style={{
         width,
         height: APP_NODE_HEIGHT,
+        // Room for the pie, taken from the text rather than shared with it:
+        // two unreadable things would be worse than one truncated name.
+        ...(slices.length > 0 ? { paddingRight: PIE_SIZE + 10 } : {}),
         borderColor: data.isRoot ? "var(--color-accent)" : "var(--color-border)",
         borderWidth: data.isRoot ? 2 : 1.5,
       }}
@@ -108,6 +134,14 @@ export default function ApplicationNode({
       <Handle type="target" position={Position.Right} style={{ visibility: "hidden" }} />
       <ResizeHandle edge="left" onResize={data.onResize} />
       <ResizeHandle edge="right" onResize={data.onResize} />
+      {/* Right edge, vertically centred — which leaves the info button its
+          bottom-right corner. No `nodrag`: the rectangle's own drag and click
+          reach it by bubbling, and the slices need hover for their tooltip. */}
+      {slices.length > 0 && (
+        <div className="absolute right-1.5 top-1/2 -translate-y-1/2">
+          <CapabilityPie slices={slices} size={PIE_SIZE} />
+        </div>
+      )}
       {settings.showName && (
         <div className="truncate font-mono text-sm font-semibold text-fg" title={data.name}>
           {data.name}

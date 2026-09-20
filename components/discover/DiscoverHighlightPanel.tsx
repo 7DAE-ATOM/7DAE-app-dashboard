@@ -21,7 +21,15 @@ import {
   useDataObjectColors,
   useDataObjectLegendEnabled,
 } from "@/lib/discoverDataObjectLegend";
-import { countApplicationsPerNode } from "@/lib/businessCapabilities";
+import {
+  setCapabilityLegendEnabled,
+  useCapabilityColors,
+  useCapabilityLegendEnabled,
+} from "@/lib/discoverCapabilityLegend";
+import {
+  countApplicationsPerNode,
+  coveredCapabilityIds,
+} from "@/lib/businessCapabilities";
 import { carriedDataObjectIds, countApplicationsPerDataObject } from "@/lib/dataObjects";
 import { expandSelection, withAncestors } from "@/lib/hierarchyTree";
 import { useBusinessCapabilityTree } from "@/lib/useBusinessCapabilityTree";
@@ -218,6 +226,8 @@ function HighlightChapters({
   const contents = useCanvasContents();
   const legendOn = useDataObjectLegendEnabled();
   const colors = useDataObjectColors();
+  const legendCapabilitiesOn = useCapabilityLegendEnabled();
+  const capabilityColors = useCapabilityColors();
 
   /** The rectangles on the canvas, resolved against the catalogue. An
    * application revealed by an Interface query is not in there, so it is
@@ -271,6 +281,33 @@ function HighlightChapters({
         : EMPTY_COUNTS,
     [capabilityTree, displayedApplications],
   );
+
+  /**
+   * Unlike the Data Object axis, the criterion here **is** the counter already
+   * on screen: it counts the applications of the diagram linked to a node,
+   * which is exactly what the checkbox asks for. And since it is rolled up
+   * from the leaves, "count is not zero" already contains every ancestor of a
+   * kept node — so the paths stay walkable without `withAncestors`.
+   */
+  const capabilityRestrictTo = useMemo(() => {
+    if (!legendCapabilitiesOn || !capabilityTree) return null;
+    const kept = new Set<string>();
+    for (const [id, count] of capabilityCounts) if (count > 0) kept.add(id);
+    return kept;
+  }, [legendCapabilitiesOn, capabilityTree, capabilityCounts]);
+
+  /** Only a **direct** link earns a colour. A parent that shows up through the
+   * roll-up alone stays bare — colouring it would put a capability on an
+   * application's pie that the application does not declare. */
+  const capabilityDots = useMemo(() => {
+    if (!legendCapabilitiesOn || !capabilityColors) return undefined;
+    const map = new Map<string, string>();
+    for (const id of coveredCapabilityIds(capabilityTree, displayedApplications)) {
+      const color = capabilityColors.get(id);
+      if (color) map.set(id, color);
+    }
+    return map;
+  }, [legendCapabilitiesOn, capabilityColors, capabilityTree, displayedApplications]);
 
   // One expanded set per ticked node, never one flat set — see
   // `AxisHighlightSelection`.
@@ -365,7 +402,29 @@ function HighlightChapters({
         count={capabilityIds.length}
         onClear={() => onCapabilityIdsChange([])}
       >
-        {capabilityTree && (
+        {/* Names applications, where the Data Object one names interfaces —
+            the two axes are restricted on different links, and the labels are
+            what keeps that readable. */}
+        <label className="mb-2 flex cursor-pointer items-start gap-1.5 text-[11px] text-fg">
+          <input
+            type="checkbox"
+            checked={legendCapabilitiesOn}
+            onChange={(e) => setCapabilityLegendEnabled(e.target.checked)}
+            className="mt-0.5 shrink-0 accent-[var(--color-accent)]"
+          />
+          <span>
+            Only what the diagram covers
+            <span className="block text-muted">
+              Keeps the capabilities carried by a visible application, and
+              colours them on the rectangles.
+            </span>
+          </span>
+        </label>
+
+        {capabilityTree && capabilityRestrictTo?.size === 0 && (
+          <p className="text-xs text-muted">No capability is covered on this diagram.</p>
+        )}
+        {capabilityTree && capabilityRestrictTo?.size !== 0 && (
           <HierarchyTreeFilter
             tree={capabilityTree}
             searchPlaceholder="Search capabilities…"
@@ -373,6 +432,8 @@ function HighlightChapters({
             counts={capabilityCounts}
             value={capabilityIds}
             onChange={onCapabilityIdsChange}
+            restrictTo={capabilityRestrictTo}
+            dots={capabilityDots}
           />
         )}
       </Chapter>

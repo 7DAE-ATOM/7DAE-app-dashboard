@@ -2,17 +2,19 @@ import type { HierarchyTree } from "./types";
 import type { Theme } from "./useTheme";
 
 /**
- * The colour code behind Discover's data-object legend: one colour per data
- * object, the same one in the filter tree and on the flows that carry it.
+ * The colour code behind Discover's legends: one colour per node of a
+ * hierarchy, the same one wherever that node shows up.
  *
- * Two sides have to agree on it — `DiscoverHighlightPanel` (the legend) and
- * `GraphEdge` (the dots) — so the rule lives here, in a module that knows
- * nothing of React or of the DOM, rather than in either of them.
+ * Written for the data objects — the dots on the flows and their legend in the
+ * filter tree — and generalised when the Business Capabilities axis needed the
+ * very same rule for its pie slices. Nothing here is specific to either: it is
+ * "one hue per tree, one lightness per depth", and it lives in a module that
+ * knows nothing of React or of the DOM so both sides can agree on it.
  *
  * "Random" means *no meaning*, not *different every time*: a colour is derived
- * from the data object's technical id and is therefore stable from one render
- * to the next, from one session to the next, and between the tree and the
- * arrows. A real draw would be reshuffled every time a node lands on the
+ * from the node's place in the hierarchy and is therefore stable from one
+ * render to the next, from one session to the next, and between the tree and
+ * the diagram. A real draw would be reshuffled every time a node lands on the
  * canvas — the legend would change under the user's eyes at the first
  * neighbourhood expansion, and two exports of the same diagram would no longer
  * be comparable.
@@ -88,21 +90,30 @@ const LIGHTNESS_SPREAD = 4;
  * caller's business: the legend only shows dots for what a visible interface
  * carries, and an edge only draws what it transports.
  *
+ * `wheelStart` is where this axis enters the wheel. The two axes are drawn on
+ * the same canvas at the same time — dots on the flows, pie slices in the
+ * rectangles — and nothing should suggest that a capability and a data object
+ * of the same colour have anything to do with each other. Half a wheel apart
+ * keeps the first trees of each axis, the ones actually seen, well clear of
+ * one another.
+ *
  * The hue comes from the root's **rank** among the roots, which
  * `buildHierarchyTree` sorts by name — so it is stable for a given hierarchy,
  * and only shifts if a top-level data object appears or disappears in LeanIX.
  * That is the price of telling the trees apart, and it is worth paying: a
  * hashed hue is stable but can put two neighbours in the same green.
  */
-export function buildDataObjectColors(
+export function buildHierarchyColors(
   tree: HierarchyTree | null,
   theme: Theme,
+  wheelStart = 0,
 ): Map<string, string> {
   const colors = new Map<string, string>();
   if (!tree) return colors;
   const band = BANDS[theme];
 
-  tree.roots.forEach((root, rank) => {
+  tree.roots.forEach((root, index) => {
+    const rank = index + wheelStart;
     const lap = Math.floor(rank / HUE_WHEEL.length);
     const rootHue = (HUE_WHEEL[rank % HUE_WHEEL.length] + lap * LAP_SHIFT) % 360;
     // Iterative walk: the crawl can nest deeply and a recursion here would be
