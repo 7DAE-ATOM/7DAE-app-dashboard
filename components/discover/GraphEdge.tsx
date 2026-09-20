@@ -16,6 +16,7 @@ import {
   useEdgeCurvature,
 } from "@/lib/discoverEdgeCurvature";
 import { useDataObjectColors } from "@/lib/discoverDataObjectLegend";
+import { usePrefersReducedMotion } from "@/lib/usePrefersReducedMotion";
 
 export type GraphEdgeData = {
   sx: number;
@@ -60,6 +61,12 @@ const MAX_DOTS = 6;
  * node or under the arrow head. On a short arrow they close up instead of
  * overflowing. */
 const DOT_SPAN = 0.6;
+/** How fast a data object travels when the flows are animated, in graph
+ * pixels per second. A **speed**, not a duration: a fixed duration per trip
+ * would make long links race and short ones crawl, which would read as a
+ * difference in throughput that does not exist. Fixed here on purpose —
+ * deliberately not exposed to the user. */
+const FLOW_SPEED = 70;
 /** Grace period before the handle goes away, so the pointer can travel from
  * the (thin) line to the handle without losing it. */
 const HIDE_DELAY_MS = 250;
@@ -75,7 +82,12 @@ const HIDE_DELAY_MS = 250;
  * so that moving the slider re-renders the edges alone — node positions and the
  * whole `edges` memo in `DiscoverGraph` stay untouched. */
 export default function GraphEdge({ id, data, markerEnd, style }: EdgeProps) {
-  const { edgeCurvature } = useDiscoverDisplaySettings();
+  const { edgeCurvature, animateFlows } = useDiscoverDisplaySettings();
+  // The system preference wins over the toolbar switch, and it restores the
+  // still rendering rather than freezing the dots wherever the keyframes
+  // start — see `lib/usePrefersReducedMotion.ts`.
+  const reducedMotion = usePrefersReducedMotion();
+  const animated = animateFlows && !reducedMotion;
   const override = useEdgeCurvature(id);
   // `null` as long as the legend is off — then this edge renders exactly what
   // it rendered before the feature existed.
@@ -144,9 +156,16 @@ export default function GraphEdge({ id, data, markerEnd, style }: EdgeProps) {
       slots > 1 ? Math.min(DOT_SPACING / len, DOT_SPAN / (slots - 1)) : 0;
     const first = 0.5 - (step * (slots - 1)) / 2;
 
+    // Animated, the row of dots becomes a train: a **negative** delay starts
+    // each one mid-cycle instead of making it queue up, and a constant delay
+    // between them reproduces in motion the regular spacing they have at
+    // rest.
+    const gap = DOT_SPACING / FLOW_SPEED;
+
     const placed = shown.map((o, i) => ({
       key: o.id,
       ...pointAt(first + step * i),
+      delay: -i * gap,
       fill: dataObjectColors.get(o.id)!,
       title: o.name,
       label: null as string | null,
@@ -155,6 +174,7 @@ export default function GraphEdge({ id, data, markerEnd, style }: EdgeProps) {
       placed.push({
         key: "overflow",
         ...pointAt(first + step * shown.length),
+        delay: -shown.length * gap,
         fill: "var(--color-muted)",
         title: hidden.map((o) => o.name).join(", "),
         label: `+${hidden.length}`,
@@ -162,6 +182,11 @@ export default function GraphEdge({ id, data, markerEnd, style }: EdgeProps) {
     }
     return placed;
   })();
+
+  /** One trip, at the same speed on every flow. The chord stands in for the
+   * arc length: at the curvatures actually used the two differ by a few
+   * percent, which no eye reads as a speed difference. */
+  const flowDuration = Math.max(0.5, len / FLOW_SPEED);
 
   function show() {
     if (hideTimer.current) clearTimeout(hideTimer.current);
@@ -249,10 +274,26 @@ export default function GraphEdge({ id, data, markerEnd, style }: EdgeProps) {
           onPointerEnter={show}
           onPointerLeave={scheduleHide}
           pointerEvents="all"
+          // Animated, the dot rides the very path the edge draws, from the
+          // arrow head back to the application — the arrow states a
+          // dependency, the movement states the transport. The group sits at
+          // the origin and `offset-path` places it; changing that path while
+          // a node is dragged never restarts the animation, which is why this
+          // is CSS rather than SMIL.
+          className={animated ? "discover-flow-dot" : undefined}
+          style={
+            animated
+              ? ({
+                  offsetPath: `path("${path}")`,
+                  "--flow-duration": `${flowDuration}s`,
+                  "--flow-delay": `${dot.delay}s`,
+                } as React.CSSProperties)
+              : undefined
+          }
         >
           <circle
-            cx={dot.x}
-            cy={dot.y}
+            cx={animated ? 0 : dot.x}
+            cy={animated ? 0 : dot.y}
             r={DOT_RADIUS}
             fill={dot.fill}
             stroke="var(--color-bg)"
@@ -262,8 +303,8 @@ export default function GraphEdge({ id, data, markerEnd, style }: EdgeProps) {
           </circle>
           {dot.label && (
             <text
-              x={dot.x}
-              y={dot.y}
+              x={animated ? 0 : dot.x}
+              y={animated ? 0 : dot.y}
               textAnchor="middle"
               dominantBaseline="central"
               pointerEvents="none"

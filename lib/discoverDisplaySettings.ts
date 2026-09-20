@@ -10,6 +10,11 @@ export type DiscoverDisplaySettings = {
    * identity card. Toggled from the toolbar (`DiscoverInfoIconsToggle`), and
    * deliberately absent from the gear panel so there is a single control. */
   showInfoIcons: boolean;
+  /** Whether the data-object dots travel along the flows instead of sitting
+   * still at their midpoint (`components/discover/GraphEdge.tsx`). Toggled
+   * from the toolbar (`DiscoverFlowAnimationToggle`), next to the info icons
+   * — same kind of preference, same place. */
+  animateFlows: boolean;
   /** How much the graph edges bow, as a percentage (see
    * `components/discover/GraphEdge.tsx`). 0 = straight lines,
    * `EDGE_CURVATURE_NEUTRAL` = the historical rendering, 100 = twice that. */
@@ -26,6 +31,9 @@ const DEFAULT_SETTINGS: DiscoverDisplaySettings = {
   showExternalId: true,
   showManager: true,
   showInfoIcons: true,
+  // Off by default: arriving on a diagram that moves on its own, without
+  // having asked for it, would be a surprise.
+  animateFlows: false,
   edgeCurvature: EDGE_CURVATURE_NEUTRAL,
 };
 
@@ -47,6 +55,7 @@ const store = createPersistedStore<DiscoverDisplaySettings>({
       showExternalId: bool(parsed.showExternalId, DEFAULT_SETTINGS.showExternalId),
       showManager: bool(parsed.showManager, DEFAULT_SETTINGS.showManager),
       showInfoIcons: bool(parsed.showInfoIcons, DEFAULT_SETTINGS.showInfoIcons),
+      animateFlows: bool(parsed.animateFlows, DEFAULT_SETTINGS.animateFlows),
       edgeCurvature:
         typeof parsed.edgeCurvature === "number" &&
         Number.isFinite(parsed.edgeCurvature) &&

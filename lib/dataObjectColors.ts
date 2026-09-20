@@ -38,14 +38,45 @@ function hash(value: string): number {
  * dissolving into the page.
  */
 const BANDS: Record<Theme, { saturation: number; base: number; step: number; max: number }> = {
-  dark: { saturation: 62, base: 46, step: 9, max: 78 },
-  light: { saturation: 58, base: 32, step: 8, max: 62 },
+  dark: { saturation: 66, base: 46, step: 9, max: 78 },
+  light: { saturation: 64, base: 32, step: 8, max: 62 },
 };
+
+/**
+ * One hue per tree, picked from a fixed wheel rather than hashed.
+ *
+ * Hashing the root's id was the first rule, and it failed on the very first
+ * real diagram: two hashes can land a few degrees apart, and two top-level
+ * data objects came out in the same green. A hash spreads *evenly on average*,
+ * which says nothing about the handful of values actually drawn side by side.
+ *
+ * These twelve are ordered so that **consecutive** entries are far apart on
+ * the wheel: the first trees added are the ones that must be told apart at a
+ * glance, and they are the ones that get the widest separation.
+ */
+const HUE_WHEEL = [
+  212, // blue
+  28, // orange
+  145, // green
+  305, // magenta
+  50, // amber
+  190, // cyan
+  266, // violet
+  100, // lime
+  340, // pink
+  168, // teal
+  8, // red
+  230, // indigo
+];
+
+/** Past a full lap of the wheel, hues repeat; this nudges each lap so the
+ * thirteenth tree isn't the exact colour of the first. */
+const LAP_SHIFT = 11;
 
 /** How far a node may drift from its root's hue, in degrees either way. Wide
  * enough to separate a few siblings, narrow enough that a whole subtree still
  * reads as one colour. */
-const HUE_SPREAD = 12;
+const HUE_SPREAD = 8;
 /** Same idea on the lightness axis, inside the node's own depth band. */
 const LIGHTNESS_SPREAD = 4;
 
@@ -57,9 +88,11 @@ const LIGHTNESS_SPREAD = 4;
  * caller's business: the legend only shows dots for what a visible interface
  * carries, and an edge only draws what it transports.
  *
- * The hue comes from a hash of the **root's** id rather than from its index
- * among the roots: an index would shift every other tree's colour the day a
- * new root shows up in the crawl.
+ * The hue comes from the root's **rank** among the roots, which
+ * `buildHierarchyTree` sorts by name — so it is stable for a given hierarchy,
+ * and only shifts if a top-level data object appears or disappears in LeanIX.
+ * That is the price of telling the trees apart, and it is worth paying: a
+ * hashed hue is stable but can put two neighbours in the same green.
  */
 export function buildDataObjectColors(
   tree: HierarchyTree | null,
@@ -69,8 +102,9 @@ export function buildDataObjectColors(
   if (!tree) return colors;
   const band = BANDS[theme];
 
-  for (const root of tree.roots) {
-    const rootHue = hash(root.id) % 360;
+  tree.roots.forEach((root, rank) => {
+    const lap = Math.floor(rank / HUE_WHEEL.length);
+    const rootHue = (HUE_WHEEL[rank % HUE_WHEEL.length] + lap * LAP_SHIFT) % 360;
     // Iterative walk: the crawl can nest deeply and a recursion here would be
     // the only place in this axis at risk of blowing the stack.
     const stack: { id: string; depth: number }[] = [{ id: root.id, depth: 0 }];
@@ -91,7 +125,7 @@ export function buildDataObjectColors(
 
       for (const child of node.children) stack.push({ id: child.id, depth: depth + 1 });
     }
-  }
+  });
 
   return colors;
 }

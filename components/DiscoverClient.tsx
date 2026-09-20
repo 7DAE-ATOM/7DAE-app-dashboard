@@ -15,6 +15,7 @@ import DiscoverExportMenu, {
 import DiscoverViewModeToggle from "@/components/discover/DiscoverViewModeToggle";
 import DiscoverInfoIconsToggle from "@/components/discover/DiscoverInfoIconsToggle";
 import DataObjectColorsSync from "@/components/discover/DataObjectColorsSync";
+import DiscoverFlowAnimationToggle from "@/components/discover/DiscoverFlowAnimationToggle";
 import DiscoverHighlightPanel from "@/components/discover/DiscoverHighlightPanel";
 import DiagramSaveControls from "@/components/discover/DiagramSaveControls";
 import type {
@@ -317,6 +318,7 @@ export default function DiscoverClient() {
         <SelectedApplicationsBar applications={selected} onRemove={handleRemove} />
         <div className="ml-auto flex items-center gap-2">
           <DiscoverViewModeToggle />
+          <DiscoverFlowAnimationToggle />
           <DiscoverInfoIconsToggle />
           {/* Roots are the graph's only anchors, and anything no longer
               reachable from one is pruned — so "no chip" means "empty

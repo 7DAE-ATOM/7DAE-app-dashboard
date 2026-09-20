@@ -42,6 +42,7 @@
 ### La hiérarchie donne le nuancier
 
 - La **teinte** vient de l'ancêtre de plus haut niveau : tous les data objects d'un même arbre partagent une couleur.
+- Les teintes des différents arbres sont prises sur une **roue fixe de couleurs franchement séparées**, dans l'ordre des racines, et non tirées d'un hachage. Un hachage répartit bien *en moyenne*, ce qui ne dit rien de la poignée de valeurs réellement affichées côte à côte : à l'essai, deux data objects de premier niveau sont sortis dans le même vert. Contrepartie acceptée : l'apparition d'une racine dans LeanIX peut décaler les teintes des suivantes.
 - La **luminosité** vient de la profondeur : sombre à la racine, clair à la feuille.
 - Deux feuilles sœurs se retrouvent donc à la même profondeur dans la même teinte. Elles sont séparées autant que la place le permet, mais la discrimination à l'œil a une limite : au-delà de quelques nœuds par niveau, seules la **pastille survolée** (infobulle portant le nom) et la légende de l'arbre tranchent. C'est assumé — un code couleur globalement distinct sur une hiérarchie de plusieurs centaines de nœuds n'existe pas.
 - Les couleurs sont produites dans une plage de luminosité **adaptée au thème actif** : ce qui est lisible sur fond sombre ne l'est pas sur fond clair. Elles suivent donc le basculement clair/sombre.
