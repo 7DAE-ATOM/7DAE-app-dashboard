@@ -155,16 +155,29 @@ function Toggle<T extends string>({
             type="button"
             onClick={() => onChange(toggled)}
             className={clsx(
-              "relative px-3 py-2 rounded-lg text-xs font-medium border transition-colors",
+              "relative px-3 py-2 rounded-lg text-[11px] font-medium border transition-colors",
               active
                 ? "bg-accent text-accent-fg border-accent"
                 : "bg-surface-2 text-fg border-border hover:border-accent/50",
               optionClassName?.(o)
             )}
           >
-            {/* The count sits outside the flow, so a long label truncates
-              * against it instead of pushing it around. */}
-            <span className={clsx("block truncate", previewCount && "pr-6")}>
+            {/* Wrapped, not truncated. In the 340px panel a two-column chapter
+              * leaves about a hundred pixels of text per chip — less than
+              * "Development Phase" needs, and portfolio names have no length
+              * limit at all. Truncating hid the difference between two labels
+              * sharing a prefix, with no tooltip to recover it. Grid items
+              * stretch, so a chip that takes two lines simply makes its row
+              * taller and its neighbour follows.
+              *
+              * `break-words` is what saves a long unbroken name; the count
+              * stays out of the flow, so it never moves. */}
+            <span
+              className={clsx(
+                "block break-words leading-tight",
+                previewCount && "pr-6",
+              )}
+            >
               {renderLabel ? renderLabel(o) : o}
             </span>
             {count !== null && (
