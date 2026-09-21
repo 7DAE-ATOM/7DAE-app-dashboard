@@ -101,6 +101,15 @@ export type DiscoverGraphHandle = {
   /** Renders the canvas to an image. Read-only like `snapshot`: the capture
    * works on a clone, so the on-screen zoom and pan are untouched. */
   exportImage: (format: "png" | "svg") => Promise<Blob>;
+  /** How many displayed applications would have to be queried by
+   * `connectVisibleFlows` — everything else is already cached. Synchronous,
+   * so the toolbar can decide whether to warn before starting. */
+  applicationsToQuery: () => number;
+  /** Draws every flow that exists between the applications already on the
+   * canvas and isn't drawn yet. Adds interfaces and flows, **never** an
+   * application. `incomplete` when the repository didn't return everything
+   * asked for, so the caller can say the result may be partial. */
+  connectVisibleFlows: () => Promise<{ flows: number; incomplete: boolean }>;
 };
 
 type Props = {
@@ -420,22 +429,34 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
     );
   }, []);
 
-  const ensureAppInterfaces = useCallback(
-    async (appId: string): Promise<ApplicationInterfacesNode | null> => {
-      const cached = appInterfacesCache.current.get(appId);
-      if (cached) return cached;
-      const data = await fetchApplicationInterfaces(appId);
-      if (!data) return null;
-      appInterfacesCache.current.set(appId, data);
+  /** Files one application's interfaces away, both its own entry and every
+   * interface fact sheet the response carried. Single- and multi-application
+   * queries share the same GraphQL text, so an entry cached here from one is
+   * interchangeable with an entry from the other — which is what lets the
+   * batch fetches below skip whatever a context menu has already loaded. */
+  const cacheApplicationInterfaces = useCallback(
+    (data: ApplicationInterfacesNode) => {
+      appInterfacesCache.current.set(data.id, data);
       for (const edge of data.relProviderApplicationToInterface?.edges ?? []) {
         if (edge.node.factSheet) cacheInterfaceFactSheet(edge.node.factSheet);
       }
       for (const edge of data.relConsumerApplicationToInterface?.edges ?? []) {
         if (edge.node.factSheet) cacheInterfaceFactSheet(edge.node.factSheet);
       }
-      return data;
     },
     [cacheInterfaceFactSheet],
+  );
+
+  const ensureAppInterfaces = useCallback(
+    async (appId: string): Promise<ApplicationInterfacesNode | null> => {
+      const cached = appInterfacesCache.current.get(appId);
+      if (cached) return cached;
+      const data = await fetchApplicationInterfaces(appId);
+      if (!data) return null;
+      cacheApplicationInterfaces(data);
+      return data;
+    },
+    [cacheApplicationInterfaces],
   );
 
   const onNodesChange = useCallback((changes: NodeChange[]) => {
@@ -680,17 +701,9 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
         const fetched = await fetchApplicationsInterfaces(ids);
         if (cancelled) return;
 
-        // Same cache priming as `ensureAppInterfaces`, so the context menus
-        // opened on a seeded node don't re-fetch what we already hold.
-        for (const node of fetched) {
-          appInterfacesCache.current.set(node.id, node);
-          for (const edge of node.relProviderApplicationToInterface?.edges ?? []) {
-            if (edge.node.factSheet) cacheInterfaceFactSheet(edge.node.factSheet);
-          }
-          for (const edge of node.relConsumerApplicationToInterface?.edges ?? []) {
-            if (edge.node.factSheet) cacheInterfaceFactSheet(edge.node.factSheet);
-          }
-        }
+        // So the context menus opened on a seeded node don't re-fetch what we
+        // already hold.
+        for (const node of fetched) cacheApplicationInterfaces(node);
 
         const { interfaces, edges } = toInternalRelations(fetched, selectedIds);
         const byProvider = new Map<string, DiscoverInterfaceNode[]>();
@@ -757,7 +770,7 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
       cancelled = true;
       if (!committed) seededRef.current = null;
     };
-  }, [seed, makeApplicationNode, placeProviderInterfaces, cacheInterfaceFactSheet]);
+  }, [seed, makeApplicationNode, placeProviderInterfaces, cacheApplicationInterfaces]);
 
   /**
    * Draws a saved diagram, replacing whatever is on the canvas.
@@ -793,15 +806,7 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
         const fetched = await fetchApplicationsInterfaces(applicationIds);
         if (cancelled || superseded()) return;
 
-        for (const node of fetched) {
-          appInterfacesCache.current.set(node.id, node);
-          for (const edge of node.relProviderApplicationToInterface?.edges ?? []) {
-            if (edge.node.factSheet) cacheInterfaceFactSheet(edge.node.factSheet);
-          }
-          for (const edge of node.relConsumerApplicationToInterface?.edges ?? []) {
-            if (edge.node.factSheet) cacheInterfaceFactSheet(edge.node.factSheet);
-          }
-        }
+        for (const node of fetched) cacheApplicationInterfaces(node);
 
         const { interfaces, edges } = toDiagramRelations(fetched);
         const interfaceById = new Map(interfaces.map((iface) => [iface.id, iface]));
@@ -890,7 +895,7 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
     // `onLoadSettled` is deliberately out: the parent recreates nothing, but
     // an unstable callback would re-run a whole load.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pendingLoad, makeApplicationNode, cacheInterfaceFactSheet, closeAllInfo]);
+  }, [pendingLoad, makeApplicationNode, cacheApplicationInterfaces, closeAllInfo]);
 
   const removeApplication = useCallback((id: string) => {
     rootIdsRef.current.delete(id);
@@ -1046,8 +1051,29 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
         await revealInterfaceDependencies(nodeId);
         return;
       }
+      // The interfaces this application provides, **from the model** rather
+      // than from what happens to be on screen. Walking the visible ones was
+      // the whole bug: the consumers hang off these interfaces, so with none
+      // revealed the loop ran empty and the click did nothing — with no way
+      // out at all in the simplified view, where "Show API" is hidden. And in
+      // the complex view the circles aren't optional either: a flow there is
+      // drawn *to a circle*, so without it a consumer couldn't be connected.
+      // Cached after the first call, so a second click asks for nothing.
+      const data = await ensureAppInterfaces(nodeId);
+      const provided = data ? toInboundInterfaces(data) : [];
+      // Skips whatever is already there, so replaying the command adds
+      // nothing.
+      if (provided.length > 0) {
+        setNodes((current) => placeProviderInterfaces(current, nodeId, provided));
+      }
+
       const visibleIds = new Set(nodesRef.current.map((n) => n.id));
       const attached = new Set<string>();
+      // Built from `provided`, never from the nodes: `setNodes` above hasn't
+      // landed yet, so reading the canvas here would reproduce the very bug
+      // this fixes, one pass late. When the query failed, `provided` is empty
+      // and the visible providers below are all we can fall back on.
+      for (const iface of provided) attached.add(iface.id);
       for (const [ifaceId, providerId] of interfaceProviderRef.current) {
         if (providerId === nodeId && visibleIds.has(ifaceId)) attached.add(ifaceId);
       }
@@ -1058,8 +1084,97 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
         await revealInterfaceDependencies(ifaceId);
       }
     },
-    [revealInterfaceDependencies],
+    [ensureAppInterfaces, placeProviderInterfaces, revealInterfaceDependencies],
   );
+
+  /** Application rectangles currently on the canvas whose interfaces haven't
+   * been loaded yet — what the "connect" action below would actually have to
+   * ask LeanIX for. The toolbar reads it *before* deciding whether to warn:
+   * counting the rectangles instead would raise the warning on an ordinary
+   * working diagram, and a warning that always shows stops protecting. */
+  const applicationsToQuery = useCallback((): number => {
+    let count = 0;
+    for (const node of nodesRef.current) {
+      if (node.type !== "application") continue;
+      if (!appInterfacesCache.current.has(node.id)) count += 1;
+    }
+    return count;
+  }, []);
+
+  /**
+   * Draws every flow that exists **between the applications already on the
+   * canvas** and isn't drawn yet.
+   *
+   * A diagram is built by successive additions, and nothing makes the links
+   * between two applications that arrived separately appear: they can sit
+   * side by side, exchanging data, with no line between them. This closes the
+   * graph on itself.
+   *
+   * It adds interfaces and flows, never an application — a structural
+   * guarantee rather than a rule to enforce, since `toInternalRelations`
+   * returns nothing else. That is what makes the action predictable before
+   * the click and free to replay: the result is bounded by what is already on
+   * screen. Reaching further is the context menu's job, application by
+   * application, with counters that announce what a click will bring in.
+   */
+  const connectVisibleFlows = useCallback(async (): Promise<{
+    flows: number;
+    incomplete: boolean;
+  }> => {
+    const appIds = nodesRef.current
+      .filter((n) => n.type === "application")
+      .map((n) => n.id);
+    if (appIds.length < 2) return { flows: 0, incomplete: false };
+
+    const missing = appIds.filter((id) => !appInterfacesCache.current.has(id));
+    let incomplete = false;
+    if (missing.length > 0) {
+      // Chunked and parallel inside (`fetchApplicationsInterfaces`), so a
+      // hundred applications is a handful of requests, not a hundred.
+      const fetched = await fetchApplicationsInterfaces(missing);
+      for (const node of fetched) cacheApplicationInterfaces(node);
+      incomplete = fetched.length < missing.length;
+    }
+
+    const datas = appIds
+      .map((id) => appInterfacesCache.current.get(id))
+      .filter((d): d is ApplicationInterfacesNode => !!d);
+
+    // The same function that builds the catalogue-seeded graph: interfaces
+    // whose provider is in the set *and* which have a consumer in the set,
+    // deduplicated, with their edges. It reads the **provider** side, so a
+    // link A → B is found in B's data — which is why a failed query shows up
+    // as a missing link rather than an error, hence `incomplete`.
+    const { interfaces, edges } = toInternalRelations(datas, new Set(appIds));
+
+    // Counted here, against the ref, and never inside the updater below:
+    // StrictMode invokes updaters twice, which would double the tally.
+    const known = new Set(edgeMetaRef.current.map((e) => e.id));
+    const fresh = edges.filter((e) => !known.has(e.id));
+
+    if (interfaces.length > 0) {
+      const byProvider = new Map<string, DiscoverInterfaceNode[]>();
+      for (const iface of interfaces) {
+        const list = byProvider.get(iface.providerId);
+        if (list) list.push(iface);
+        else byProvider.set(iface.providerId, [iface]);
+      }
+      // One write for the whole canvas: looping `setNodes` per application
+      // would make the graph flicker and re-render React Flow each time.
+      setNodes((current) => {
+        let next = current;
+        for (const [providerId, ifaces] of byProvider) {
+          next = placeProviderInterfaces(next, providerId, ifaces);
+        }
+        return next;
+      });
+    }
+    if (fresh.length > 0) {
+      setEdgeMeta((current) => [...current, ...fresh]);
+    }
+
+    return { flows: fresh.length, incomplete };
+  }, [cacheApplicationInterfaces, placeProviderInterfaces]);
 
   const handleHide = useCallback(
     (nodeId: string) => {
@@ -1870,8 +1985,19 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
       getDiagram,
       setAxisHighlight,
       exportImage,
+      applicationsToQuery,
+      connectVisibleFlows,
     }),
-    [addApplication, removeApplication, snapshot, getDiagram, setAxisHighlight, exportImage],
+    [
+      addApplication,
+      removeApplication,
+      snapshot,
+      getDiagram,
+      setAxisHighlight,
+      exportImage,
+      applicationsToQuery,
+      connectVisibleFlows,
+    ],
   );
 
   return (

@@ -68,6 +68,7 @@ function MapLoaded({
 
   const {
     visible,
+    selectable,
     capabilityTree,
     capabilityCounts,
     dataObjectTree,
@@ -102,6 +103,7 @@ function MapLoaded({
         capabilityCounts={capabilityCounts}
         dataObjectTree={dataObjectTree}
         dataObjectCounts={dataObjectCounts}
+        selectableApplications={selectable}
         capabilityResetToken={resetToken}
         actions={actions}
         previewCount={countUnder}
@@ -120,6 +122,7 @@ function MapLoaded({
         capabilityCounts={capabilityCounts}
         dataObjectTree={dataObjectTree}
         dataObjectCounts={dataObjectCounts}
+        selectableApplications={selectable}
         capabilityResetToken={resetToken}
         actions={actions}
         previewCount={countUnder}

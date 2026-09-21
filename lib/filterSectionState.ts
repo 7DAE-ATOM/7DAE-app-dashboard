@@ -17,7 +17,8 @@ export type SectionKey =
   | "operator"
   | "criticality"
   | "capabilities"
-  | "dataObjects";
+  | "dataObjects"
+  | "applications";
 
 const SECTION_KEYS: SectionKey[] = [
   "photo",
@@ -28,6 +29,7 @@ const SECTION_KEYS: SectionKey[] = [
   "criticality",
   "capabilities",
   "dataObjects",
+  "applications",
 ];
 
 /** First visit: everything folded. Also the server/hydration snapshot, so the

@@ -51,6 +51,13 @@ export function serializeFilters(
     lines.push(`Data Objects: ${names.dataObjects.join(", ")}`);
   }
 
+  // A count, not a list of names: what matters on a cover page is that the
+  // selection was narrowed by hand, not which applications were dropped —
+  // they are, by construction, absent from the pages that follow.
+  if (filters.excludedIds.length > 0) {
+    lines.push(`Applications hidden: ${filters.excludedIds.length}`);
+  }
+
   return lines.length === 0
     ? "All applications (no filters applied)"
     : lines.join("\n");

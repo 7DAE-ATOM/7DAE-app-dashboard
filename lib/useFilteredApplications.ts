@@ -3,7 +3,7 @@
 import { useCallback, useMemo } from "react";
 import type { FilterValue } from "@/components/FilterBar";
 import type { Application, BusinessCapabilityTree, DataObjectTree } from "@/lib/types";
-import { filterApplications } from "@/lib/applications";
+import { excludeApplications, filterApplications } from "@/lib/applications";
 import { expandSelection } from "@/lib/hierarchyTree";
 import { countApplicationsPerNode } from "@/lib/businessCapabilities";
 import { countApplicationsPerDataObject } from "@/lib/dataObjects";
@@ -11,9 +11,13 @@ import { useBusinessCapabilityTree } from "@/lib/useBusinessCapabilityTree";
 import { useDataObjectTree } from "@/lib/useDataObjectTree";
 
 export type FilteredApplications = {
-  /** The applications matching every axis — what the catalogue paginates and
-   * what the map plots. */
+  /** The applications matching every axis **and** left visible by hand — what
+   * the catalogue paginates and what the map plots. */
   visible: Application[];
+  /** The same, **before** the hand-picked exclusions: what the Applications
+   * chapter lists. The distinction is the whole point of that chapter — it has
+   * to keep showing an unticked row, or nothing could ever tick it back on. */
+  selectable: Application[];
   /** `null` while the hierarchy loads, or if its crawl failed: the panel then
    * omits the whole section rather than showing it empty. */
   capabilityTree: BusinessCapabilityTree | null;
@@ -79,21 +83,36 @@ export function useFilteredApplications(
     [base, dataObjectIdsExpanded],
   );
 
+  // Counted on what is actually displayed, exclusions included: the panel's
+  // promise is that a count and the result it announces never disagree.
   const capabilityCounts = useMemo(
-    () => countApplicationsPerNode(capabilityTree, afterDataObjects),
-    [capabilityTree, afterDataObjects],
+    () =>
+      countApplicationsPerNode(
+        capabilityTree,
+        excludeApplications(afterDataObjects, filters.excludedIds),
+      ),
+    [capabilityTree, afterDataObjects, filters.excludedIds],
   );
   const dataObjectCounts = useMemo(
-    () => countApplicationsPerDataObject(dataObjectTree, afterCapabilities),
-    [dataObjectTree, afterCapabilities],
+    () =>
+      countApplicationsPerDataObject(
+        dataObjectTree,
+        excludeApplications(afterCapabilities, filters.excludedIds),
+      ),
+    [dataObjectTree, afterCapabilities, filters.excludedIds],
   );
 
-  const visible = useMemo(
+  const selectable = useMemo(
     () =>
       dataObjectIdsExpanded.size === 0
         ? afterCapabilities
         : filterApplications(afterCapabilities, { dataObjectIdsExpanded }),
     [afterCapabilities, dataObjectIdsExpanded],
+  );
+
+  const visible = useMemo(
+    () => excludeApplications(selectable, filters.excludedIds),
+    [selectable, filters.excludedIds],
   );
 
   const countUnder = useCallback(
@@ -107,17 +126,21 @@ export function useFilteredApplications(
               businessCapabilityIdsExpanded: capabilities,
             });
       const objects = expandSelection(dataObjectTree, next.dataObjectIds);
-      return objects.size === 0
-        ? withCapabilities.length
-        : filterApplications(withCapabilities, {
-            dataObjectIdsExpanded: objects,
-          }).length;
+      const withObjects =
+        objects.size === 0
+          ? withCapabilities
+          : filterApplications(withCapabilities, {
+              dataObjectIdsExpanded: objects,
+            });
+      // Last, like everywhere else: the hand-picked exclusions.
+      return excludeApplications(withObjects, next.excludedIds).length;
     },
     [applications, capabilityTree, dataObjectTree],
   );
 
   return {
     visible,
+    selectable,
     capabilityTree,
     capabilityCounts,
     dataObjectTree,

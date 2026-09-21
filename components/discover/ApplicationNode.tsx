@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import Link from "next/link";
 import { Handle, Position } from "@xyflow/react";
 import { useDiscoverDisplaySettings } from "@/lib/discoverDisplaySettings";
 import { APP_NODE_HEIGHT, APP_NODE_WIDTH } from "@/lib/discover-graph-layout";
@@ -142,11 +143,36 @@ export default function ApplicationNode({
           <CapabilityPie slices={slices} size={PIE_SIZE} />
         </div>
       )}
-      {settings.showName && (
-        <div className="truncate font-mono text-sm font-semibold text-fg" title={data.name}>
-          {data.name}
-        </div>
-      )}
+      {settings.showName &&
+        (data.externalId ? (
+          /* The detail page is keyed by externalId, so an application the
+             repository gave no external id to keeps a plain, unlinked title
+             rather than a link that would land nowhere.
+
+             `next/link` and not a plain anchor: behind the AFTER gateway the
+             app is served under a basePath, which Link applies and a bare
+             `/application?…` href would miss. `prefetch={false}` for the usual
+             reason (see `ApplicationCard`): every detail link resolves to the
+             same static page, so viewport prefetch would spam the gateway. */
+          <Link
+            href={`/application?id=${encodeURIComponent(data.externalId)}`}
+            prefetch={false}
+            target="_blank"
+            rel="noopener noreferrer"
+            // `nodrag`, or a click-and-hold on the title drags the rectangle
+            // and the navigation never fires. `stopPropagation`, or the
+            // rectangle's own click pins the highlight on the way out.
+            className="nodrag block truncate font-mono text-sm font-semibold text-fg hover:text-accent hover:underline"
+            onClick={(e) => e.stopPropagation()}
+            title={`${data.name} — open the application sheet in a new tab`}
+          >
+            {data.name}
+          </Link>
+        ) : (
+          <div className="truncate font-mono text-sm font-semibold text-fg" title={data.name}>
+            {data.name}
+          </div>
+        ))}
       {settings.showExternalId && (
         <div className="truncate text-xs text-muted">{data.externalId ?? "—"}</div>
       )}

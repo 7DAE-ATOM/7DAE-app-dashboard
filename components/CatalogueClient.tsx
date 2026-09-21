@@ -112,6 +112,7 @@ function CatalogueLoaded({
 
   const {
     visible,
+    selectable,
     capabilityTree,
     capabilityCounts,
     dataObjectTree,
@@ -178,6 +179,7 @@ function CatalogueLoaded({
             capabilityCounts={capabilityCounts}
             dataObjectTree={dataObjectTree}
             dataObjectCounts={dataObjectCounts}
+            selectableApplications={selectable}
             capabilityResetToken={resetToken}
             actions={actions}
             previewCount={countUnder}
@@ -225,6 +227,7 @@ function CatalogueLoaded({
         capabilityCounts={capabilityCounts}
         dataObjectTree={dataObjectTree}
         dataObjectCounts={dataObjectCounts}
+        selectableApplications={selectable}
         capabilityResetToken={resetToken}
         actions={actions}
         previewCount={countUnder}

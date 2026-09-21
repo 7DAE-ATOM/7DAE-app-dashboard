@@ -33,6 +33,7 @@ export const DEFAULT_FILTERS: FilterValue = {
   businessCriticalities: [],
   businessCapabilityIds: [],
   dataObjectIds: [],
+  excludedIds: [],
 };
 
 export type CatalogueState = {
@@ -84,6 +85,7 @@ function restore(raw: string): FilterValue | null {
       stringArray(p.businessCapabilityIds) ??
       DEFAULT_FILTERS.businessCapabilityIds,
     dataObjectIds: stringArray(p.dataObjectIds) ?? DEFAULT_FILTERS.dataObjectIds,
+    excludedIds: stringArray(p.excludedIds) ?? DEFAULT_FILTERS.excludedIds,
   };
 }
 
@@ -171,6 +173,10 @@ export function countActiveFilters(v: FilterValue): number {
     v.businessCriticalities.length +
     v.businessCapabilityIds.length +
     v.dataObjectIds.length +
+    // A hidden application is an active value, like a ticked capability: it is
+    // what lights the badge and offers "Clear" on a result that has been
+    // narrowed by hand.
+    v.excludedIds.length +
     (v.search ? 1 : 0) +
     (v.operator ? 1 : 0) +
     (v.photo !== "all" ? 1 : 0)
