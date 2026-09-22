@@ -310,7 +310,12 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
   const [openInterfaceIds, setOpenInterfaceIds] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
-  const { showInfoIcons } = useDiscoverDisplaySettings();
+  const { showInfoIcons, boxWidth } = useDiscoverDisplaySettings();
+  /** Read by callbacks that must not be rebuilt on every tick of the Box
+   * width slider — `makeApplicationNode`'s per-node `onResize` closure above
+   * all, whose identity is baked into every application node's data. */
+  const boxWidthRef = useRef(boxWidth);
+  boxWidthRef.current = boxWidth;
   const containerRef = useRef<HTMLDivElement>(null);
   /** Captured via `onInit` instead of `useReactFlow()` so the component
    * doesn't have to be split around a `ReactFlowProvider` just to re-fit the
@@ -497,7 +502,7 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
       setNodes((current) => {
         const node = current.find((n) => n.id === appId);
         if (!node || node.type !== "application") return current;
-        const oldWidth = (node.data as ApplicationNodeData).width ?? APP_NODE_WIDTH;
+        const oldWidth = (node.data as ApplicationNodeData).width ?? boxWidthRef.current;
         const circleCenterXs = current
           .filter((n) => n.type === "interface" && interfaceProviderRef.current.get(n.id) === appId)
           .map((n) => n.position.x + INTERFACE_NODE_SIZE / 2);
@@ -519,7 +524,8 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
             return {
               ...n,
               position: growth !== 0 ? { ...n.position, x: n.position.x - growth } : n.position,
-              data: { ...n.data, width: newWidth },
+              // Pinned from here on: a width chosen by hand outranks the slider.
+              data: { ...n.data, width: newWidth, widthPinned: true },
             };
           }
           if (
@@ -536,6 +542,76 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
     [],
   );
 
+  /** Applies the Box width slider to every rectangle the user hasn't resized
+   * by hand.
+   *
+   * The floor is the same one `handleResizeApplication` applies to a
+   * right-edge drag: a box never shrinks past the centre of an interface
+   * circle it carries, which would leave the circle hanging outside its own
+   * provider. So in the Interfaces view a loaded box can stay wider than the
+   * slider says — deliberately.
+   *
+   * Only the right border moves (the node's own position is untouched), so
+   * unlike the left-edge drag there is nothing to compensate on the child
+   * circles — but a circle parked on the *right* border would end up floating
+   * inside a widened box, so every circle of a resized box is re-snapped onto
+   * the new perimeter with the same projection `onNodesChange` applies to a
+   * drag. Doing it here rather than waiting for xyflow's measurement echo
+   * avoids a visible one-frame jump. As with a manual drag, a circle near a
+   * corner may land on the adjacent side.
+   *
+   * `isBaselineUpdateRef` because this is a display preference, not an edit:
+   * without it, moving the slider would flag a freshly loaded diagram as
+   * having unsaved changes. It is set only when something actually changes,
+   * so a no-op run never swallows the flag for a later genuine edit.
+   *
+   * Depends on `nodes` as well as the slider so the per-box floor is
+   * re-evaluated when circles are revealed or hidden, and reads `nodesRef`
+   * (synced on every render) so the flag is raised outside the state updater,
+   * which React may call twice. The early return makes the extra passes
+   * free — and it converges: the projection can only move a circle's centre
+   * to a value the new width already accommodates. */
+  useEffect(() => {
+    const half = INTERFACE_NODE_SIZE / 2;
+    const current = nodesRef.current;
+
+    const floorByApp = new Map<string, number>();
+    for (const n of current) {
+      if (n.type !== "interface") continue;
+      const providerId = n.parentId ?? interfaceProviderRef.current.get(n.id);
+      if (!providerId) continue;
+      floorByApp.set(providerId, Math.max(floorByApp.get(providerId) ?? 0, n.position.x + half));
+    }
+
+    const resized = new Map<string, number>();
+    for (const n of current) {
+      if (n.type !== "application") continue;
+      const data = n.data as unknown as ApplicationNodeData;
+      if (data.widthPinned) continue;
+      const width = Math.max(boxWidth, MIN_APP_NODE_WIDTH, floorByApp.get(n.id) ?? 0);
+      if (data.width !== width) resized.set(n.id, width);
+    }
+    if (resized.size === 0) return;
+
+    const next = current.map((n) => {
+      if (n.type === "application") {
+        const width = resized.get(n.id);
+        return width === undefined ? n : { ...n, data: { ...n.data, width } };
+      }
+      if (n.type !== "interface") return n;
+      const providerId = n.parentId ?? interfaceProviderRef.current.get(n.id);
+      const width = providerId ? resized.get(providerId) : undefined;
+      if (width === undefined) return n;
+      const center = { x: n.position.x + half, y: n.position.y + half };
+      const projected = projectPointToRectanglePerimeter(center, width, APP_NODE_HEIGHT);
+      const position = { x: projected.x - half, y: projected.y - half };
+      return position.x === n.position.x && position.y === n.position.y ? n : { ...n, position };
+    });
+
+    isBaselineUpdateRef.current = true;
+    setNodes(next);
+  }, [boxWidth, nodes, setNodes]);
+
   const makeApplicationNode = useCallback(
     (app: DiscoverApplicationNode, position: { x: number; y: number }, isRoot: boolean): Node => ({
       id: app.id,
@@ -546,7 +622,9 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
         externalId: app.externalId,
         managerName: resolveManagerName(app.id) ?? app.managerName,
         isRoot,
-        width: APP_NODE_WIDTH,
+        // Follows the Box width slider until the user drags a handle.
+        width: boxWidthRef.current,
+        widthPinned: false,
         onResize: (edge, proposedWidth) => handleResizeApplication(app.id, edge, proposedWidth),
       } satisfies ApplicationNodeData,
     }),
@@ -660,7 +738,12 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
         }
         const byId = new Map(current.map((n) => [n.id, n]));
         const anchor = absolutePosition(current[current.length - 1], byId);
-        const position = placeNewApplicationNode(anchor, "right", boxesOf(current));
+        const position = placeNewApplicationNode(
+          anchor,
+          "right",
+          boxesOf(current),
+          boxWidthRef.current,
+        );
         return [...current, makeApplicationNode(app, position, true)];
       });
     },
@@ -725,6 +808,7 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
             source: e.consumerId,
             target: providerOf.get(e.interfaceId) ?? e.consumerId,
           })),
+          boxWidthRef.current,
         );
         if (cancelled || superseded()) return;
 
@@ -748,7 +832,7 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
         setSeedError(e instanceof Error ? e.message : String(e));
         // The rectangles still belong on screen — only their relations
         // failed to load; fall back to the edgeless packing.
-        const packed = await layoutRootApplications(ids).catch(
+        const packed = await layoutRootApplications(ids, [], boxWidthRef.current).catch(
           () => new Map<string, { x: number; y: number }>(),
         );
         if (cancelled || superseded()) return;
@@ -861,10 +945,12 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
               positionById.get(app.id) ?? { x: 0, y: 0 },
               rootIdsRef.current.has(app.id),
             );
+            // A saved width only ever means "the user resized this one", so
+            // it comes back pinned; the rest follow the Box width slider.
             const width = widthById.get(app.id);
             return width === undefined
               ? node
-              : { ...node, data: { ...node.data, width } };
+              : { ...node, data: { ...node.data, width, widthPinned: true } };
           });
           const circles = restoredInterfaces.map((saved) =>
             makeInterfaceNode(
@@ -969,7 +1055,12 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
         let cursor = anchor;
         for (const provider of providers) {
           if (existingIds.has(provider.id)) continue;
-          const position = placeNewApplicationNode(cursor, "left", boxesOf(next));
+          const position = placeNewApplicationNode(
+            cursor,
+            "left",
+            boxesOf(next),
+            boxWidthRef.current,
+          );
           next = [...next, makeApplicationNode(provider, position, false)];
           existingIds.add(provider.id);
           cursor = position;
@@ -1017,7 +1108,12 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
           return iface ? absolutePosition(iface, byId) : { x: 0, y: 0 };
         };
         if (provider && !existingIds.has(provider.id)) {
-          const position = placeNewApplicationNode(ifaceAnchor(), "left", boxesOf(next));
+          const position = placeNewApplicationNode(
+            ifaceAnchor(),
+            "left",
+            boxesOf(next),
+            boxWidthRef.current,
+          );
           next = [...next, makeApplicationNode(provider, position, false)];
           existingIds.add(provider.id);
           interfaceProviderRef.current.set(ifaceId, provider.id);
@@ -1027,7 +1123,12 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
         let cursor = ifaceAnchor();
         const added: Node[] = [];
         for (const c of missingConsumers) {
-          const position = placeNewApplicationNode(cursor, "right", boxesOf([...next, ...added]));
+          const position = placeNewApplicationNode(
+            cursor,
+            "right",
+            boxesOf([...next, ...added]),
+            boxWidthRef.current,
+          );
           added.push(makeApplicationNode(c, position, false));
           cursor = position;
         }
@@ -1230,8 +1331,11 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
             id: n.id,
             x: n.position.x,
             y: n.position.y,
-            // Only when the user actually resized the box.
-            ...(width !== undefined && width !== APP_NODE_WIDTH ? { width } : {}),
+            // Only when the user actually resized the box — the others
+            // follow whatever Box width the reader has set.
+            ...((n.data as unknown as ApplicationNodeData).widthPinned && width !== undefined
+              ? { width }
+              : {}),
           };
         }),
       interfaces: current

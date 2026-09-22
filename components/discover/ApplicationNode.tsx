@@ -23,6 +23,10 @@ export type ApplicationNodeData = {
   isRoot: boolean;
   /** Per-node, user-resizable — falls back to the default when absent. */
   width?: number;
+  /** Set once the user has dragged this box's handle. The global Box width
+   * slider then leaves the box alone: a width chosen by hand is a decision,
+   * not a default. */
+  widthPinned?: boolean;
   /** Reports a resize-in-progress width from a drag on either vertical
    * edge; `DiscoverGraph`'s `handleResizeApplication` clamps it (floor, and
    * never past a currently-visible interface circle) and, for the left
@@ -98,7 +102,7 @@ export default function ApplicationNode({
   const { openApplicationIds, toggle, closeApplication, resolveApplication } =
     useApplicationInfo();
   const capabilityColors = useCapabilityColors();
-  const width = data.width ?? APP_NODE_WIDTH;
+  const width = data.width ?? settings.boxWidth;
   const infoOpen = openApplicationIds.has(id);
 
   /** The capabilities this application declares, in the legend's colours.
