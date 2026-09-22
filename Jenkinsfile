@@ -141,7 +141,7 @@ pipeline {
                     sh """
                         helm upgrade ${APP_NAME} ./helm \
                         --values ./values-${TARGET_ENV}.yaml \
-                        --set app.image.name=${env.ARTIFACTORY_HOST}/transversal/app-dashboard \
+                        --set app.image.name=${env.ARTIFACTORY_HOST}/transversal/${env.APP_NAME} \
                         --set app.image.tag=${env.PROJECT_VERSION} \
                         --kubeconfig=${KUBECONFIG} \
                         --namespace ${AFTER_APP_NAMESPACE} \
