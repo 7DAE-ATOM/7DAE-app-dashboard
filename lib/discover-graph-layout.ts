@@ -2,9 +2,12 @@ import ELK, { type ElkNode } from "elkjs/lib/elk.bundled.js";
 
 const elk = new ELK();
 
-/** Default footprint of an Application rectangle — the width the user can
- * then resize per-node (see `ApplicationNode.tsx`'s resize handles and
- * `DiscoverGraph`'s `handleResizeApplication`); the height never changes. */
+/** Default footprint of an Application rectangle. The width is only the
+ * fallback: it is normally driven by the Box width slider
+ * (`lib/discoverDisplaySettings.ts`, which mirrors this value as
+ * `BOX_WIDTH_DEFAULT`) and can be overridden per node by the resize handles
+ * (`ApplicationNode.tsx`, `DiscoverGraph`'s `handleResizeApplication`). The
+ * height never changes. */
 export const APP_NODE_WIDTH = 200;
 /** Tall enough for the three rows a card can show at once — name (20px line
  * box), External ID and manager (16px each) — plus its `py-2` padding and its
@@ -34,10 +37,11 @@ export const MIN_APP_NODE_WIDTH = 120;
 export async function layoutRootApplications(
   ids: string[],
   edges: { id: string; source: string; target: string }[] = [],
+  width: number = APP_NODE_WIDTH,
 ): Promise<Map<string, { x: number; y: number }>> {
   const graph: ElkNode = {
     id: "root",
-    children: ids.map((id) => ({ id, width: APP_NODE_WIDTH, height: APP_NODE_HEIGHT })),
+    children: ids.map((id) => ({ id, width, height: APP_NODE_HEIGHT })),
     edges: edges.map((e) => ({ id: e.id, sources: [e.source], targets: [e.target] })),
   };
   const result = await elk.layout(graph, {
@@ -155,10 +159,11 @@ export function placeNewApplicationNode(
   anchor: { x: number; y: number },
   direction: "left" | "right",
   existing: { x: number; y: number; width: number; height: number }[],
+  width: number = APP_NODE_WIDTH,
 ): { x: number; y: number } {
-  const dx = direction === "right" ? APP_NODE_WIDTH + 80 : -(APP_NODE_WIDTH + 80);
+  const dx = direction === "right" ? width + 80 : -(width + 80);
   let candidate = { x: anchor.x + dx, y: anchor.y };
-  const box = () => ({ ...candidate, width: APP_NODE_WIDTH, height: APP_NODE_HEIGHT });
+  const box = () => ({ ...candidate, width, height: APP_NODE_HEIGHT });
   let guard = 0;
   while (existing.some((n) => rectsOverlap(box(), n)) && guard < 50) {
     candidate = { ...candidate, y: candidate.y + APP_NODE_HEIGHT + 30 };

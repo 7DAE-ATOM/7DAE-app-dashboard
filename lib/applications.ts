@@ -55,6 +55,25 @@ export type Filters = {
   dataObjectIdsExpanded?: Set<string>;
 };
 
+/**
+ * Removes the applications hidden by hand in the Applications chapter of the
+ * filter panel.
+ *
+ * Kept **out** of `filterApplications` deliberately. That function builds the
+ * very list the chapter displays, and an exclusion applied there would drop
+ * the unticked rows out of the list — making them impossible to tick back on.
+ * Exclusions are a final removal, applied by the caller at the places that
+ * want them, never an axis among the others.
+ */
+export function excludeApplications(
+  list: Application[],
+  excludedIds: string[] | undefined,
+): Application[] {
+  if (!excludedIds?.length) return list;
+  const excluded = new Set(excludedIds);
+  return list.filter((a) => !excluded.has(a.id));
+}
+
 export function filterApplications(
   list: Application[],
   f: Filters,

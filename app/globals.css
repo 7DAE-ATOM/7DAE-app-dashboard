@@ -132,7 +132,7 @@ summary:focus-visible {
 /*
  * Discover graph hover trace (components/discover/DiscoverGraph.tsx) —
  * toggled imperatively on the DOM (not via React state), same technique as
- * 7DAE-ltm-dashboard's /depgraph, so hovering never forces React Flow to
+ * 7DAE-app-dashboard's /depgraph, so hovering never forces React Flow to
  * re-measure node sizes.
  */
 .react-flow__node,
@@ -148,4 +148,30 @@ summary:focus-visible {
 .react-flow__edge.rf-emph .react-flow__edge-path {
   stroke-width: 3px;
   transition: stroke-width 150ms ease;
+}
+
+/*
+ * Data objects travelling along a flow (components/discover/GraphEdge.tsx).
+ *
+ * From 100% to 0% — that is, from the arrow head back to the application:
+ * a Discover arrow says "consumes", which is a dependency, not a trajectory,
+ * and the data itself comes down from the provider to the caller.
+ *
+ * `offset-path` is set inline per edge, and the browser recomputes the
+ * trajectory when it changes without ever restarting this animation — which
+ * is what keeps the dots moving while a node is being dragged. The two
+ * variables are written inline too: duration from the flow's length (so every
+ * flow shows the same speed), and a **negative** delay per dot, which starts
+ * it mid-cycle instead of making it queue up.
+ */
+@keyframes discover-flow {
+  from { offset-distance: 100%; }
+  to { offset-distance: 0%; }
+}
+.discover-flow-dot {
+  /* Without this, the dot would rotate to follow the tangent — invisible on a
+     disc, plain to see on the "+N" label. */
+  offset-rotate: 0deg;
+  animation: discover-flow var(--flow-duration, 4s) linear infinite;
+  animation-delay: var(--flow-delay, 0s);
 }

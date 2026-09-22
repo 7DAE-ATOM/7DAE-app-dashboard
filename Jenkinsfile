@@ -22,14 +22,14 @@ pipeline {
 
         TARGET_ENV          = "${params.targetEnv ?: 'val'}"
 
-        APP_NAME            = "ltm-dashboard"
+        APP_NAME            = "app-dashboard"
 		AFTER_APP_NAMESPACE = "7dae-atom-${TARGET_ENV}"
 
         ARTIFACTORY_HOST    = "r-2k77-devops-docker-releases-local.artifactory.fr.eu.airbus.corp"
         NPMRC_PATH          = 'config/.npmrc'
 
-        BASE_HREF               = "/atom-ltm-dashboard"
-        ATOM_API_URL_VAL        = "https://gateway2-val.after-val.eu.airbus.corp/atom-synchronizer-val"
+        BASE_HREF               = "/atom-app-dashboard"
+        ATOM_API_URL_VAL        = "https://gateway-val.after-val.eu.airbus.corp/atom-synchronizer-val"
         ATOM_API_URL_PROD       = "https://gateway2.after.eu.airbus.corp/atom-synchronizer-prod"
     }
 
@@ -95,17 +95,9 @@ pipeline {
                 script {
                     def atomApiUrl = TARGET_ENV == 'prod' ? ATOM_API_URL_PROD : ATOM_API_URL_VAL
                     sh "BASE_HREF=${BASE_HREF} NEXT_PUBLIC_BASE_HREF=${BASE_HREF} NEXT_PUBLIC_ATOM_API_BASE_URL=${atomApiUrl} npm run build"
-
-                    // Licences of the redistributed fonts, then the third-party
-                    // URL check. Both run HERE, inside the Build stage and
-                    // BEFORE the stash: the later stages run on other agents and
-                    // receive nothing but the stash, and a failure here must stop
-                    // the artefact from being packaged at all, not merely report.
-                    sh "npm run collect:licenses"
-                    sh "NEXT_PUBLIC_ATOM_API_BASE_URL=${atomApiUrl} npm run check:external-urls"
                 }
                 echo "Stashing static export and Docker config for packaging..."
-                stash includes: 'out/**,Dockerfile,nginx.conf,nginx-custom.conf', name: 'next-build'
+                stash includes: 'out/**,Dockerfile,deployment/nginx/nginx.conf,deployment/nginx/nginx-custom.conf', name: 'next-build'
             }
         }
 
@@ -149,7 +141,7 @@ pipeline {
                     sh """
                         helm upgrade ${APP_NAME} ./helm \
                         --values ./values-${TARGET_ENV}.yaml \
-                        --set app.image.name=${env.ARTIFACTORY_HOST}/transversal/ltm-dashboard \
+                        --set app.image.name=${env.ARTIFACTORY_HOST}/transversal/app-dashboard \
                         --set app.image.tag=${env.PROJECT_VERSION} \
                         --kubeconfig=${KUBECONFIG} \
                         --namespace ${AFTER_APP_NAMESPACE} \

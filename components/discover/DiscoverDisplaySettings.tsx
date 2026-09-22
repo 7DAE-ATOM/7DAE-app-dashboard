@@ -3,6 +3,9 @@
 import { useEffect, useRef, useState } from "react";
 import Switch from "@/components/Switch";
 import {
+  BOX_WIDTH_MAX,
+  BOX_WIDTH_MIN,
+  BOX_WIDTH_STEP,
   setDiscoverDisplaySetting,
   useDiscoverDisplaySettings,
   type DiscoverDisplaySettings,
@@ -73,12 +76,38 @@ export default function DiscoverDisplaySettings() {
             ))}
           </div>
 
+          {/* No section header, unlike its neighbours: the row label says it
+              all, and it keeps the panel aligned with the same control in
+              7DAE-ltm-dashboard's dependency graph. */}
+          <div className="mt-4 border-t border-border pt-3">
+            <div className="flex items-center justify-between gap-3">
+              <label htmlFor="box-width" className="text-sm text-fg">
+                Box width
+              </label>
+              <span className="w-12 text-right font-mono text-xs text-muted tabular-nums">
+                {settings.boxWidth}px
+              </span>
+            </div>
+            <input
+              id="box-width"
+              type="range"
+              min={BOX_WIDTH_MIN}
+              max={BOX_WIDTH_MAX}
+              step={BOX_WIDTH_STEP}
+              value={settings.boxWidth}
+              onChange={(e) =>
+                setDiscoverDisplaySetting("boxWidth", Number(e.target.value))
+              }
+              className="mt-2 w-full accent-[var(--color-accent)]"
+            />
+          </div>
+
           <div className="mb-1 mt-4 border-t border-border pt-3 text-xs uppercase tracking-[0.1em] text-muted">
             Links
           </div>
           <div className="flex items-center justify-between gap-3">
             <label htmlFor="edge-curvature" className="text-sm text-fg">
-              Curvature
+              Link curvature
             </label>
             <span className="w-10 text-right font-mono text-xs text-muted tabular-nums">
               {settings.edgeCurvature}%

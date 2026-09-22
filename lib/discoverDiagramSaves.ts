@@ -20,7 +20,10 @@ import { downloadBlob } from "@/lib/downloadBlob";
  * enough that `localStorage` isn't the binding constraint.
  */
 
-/** Absolute canvas coordinates; `width` only when the user resized the box. */
+/** Absolute canvas coordinates; `width` only for a box the user pinned by
+ * hand with its resize handle. Every other box follows the reader's own Box
+ * width setting (`lib/discoverDisplaySettings.ts`), which is a preference,
+ * not a property of the diagram. */
 export type DiagramSaveApplication = {
   id: string;
   x: number;

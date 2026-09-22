@@ -5,6 +5,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import FilterBar, { type FilterValue } from "./FilterBar";
 import { countActiveFilters } from "@/lib/appFilters";
 import type {
+  Application,
   ApplicationCategory,
   ApplicationStatus,
   BusinessCapabilityTree,
@@ -21,6 +22,8 @@ type Props = {
   capabilityCounts?: Map<string, number>;
   dataObjectTree?: DataObjectTree | null;
   dataObjectCounts?: Map<string, number>;
+  /** Forwarded to `FilterBar` — the rows of its Applications chapter. */
+  selectableApplications?: Application[];
   capabilityResetToken?: number;
   /** Forwarded to `FilterBar` — same "ACTIONS" row as on desktop. */
   actions?: ReactNode;
@@ -41,6 +44,7 @@ export default function FilterSheet({
   capabilityCounts,
   dataObjectTree,
   dataObjectCounts,
+  selectableApplications,
   capabilityResetToken,
   actions,
   previewCount,
@@ -102,6 +106,7 @@ export default function FilterSheet({
                 capabilityCounts={capabilityCounts}
                 dataObjectTree={dataObjectTree}
                 dataObjectCounts={dataObjectCounts}
+                selectableApplications={selectableApplications}
                 capabilityResetToken={capabilityResetToken}
                 actions={actions}
                 previewCount={previewCount}

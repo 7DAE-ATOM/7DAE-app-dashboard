@@ -2,6 +2,7 @@
 
 import { useId, useMemo, type ReactNode } from "react";
 import type {
+  Application,
   ApplicationCategory,
   ApplicationStatus,
   BusinessCapabilityTree,
@@ -9,6 +10,7 @@ import type {
   DataObjectTree,
   PhotoFilter,
 } from "@/lib/types";
+import ApplicationVisibilityList from "@/components/ApplicationVisibilityList";
 import FilterSection from "@/components/FilterSection";
 import HierarchyTreeFilter from "@/components/HierarchyTreeFilter";
 import { PORTFOLIO_NONE } from "@/lib/applications";
@@ -59,6 +61,11 @@ export type FilterValue = {
   businessCapabilityIds: string[];
   /** Checked Data Object nodes, same convention as the capabilities above. */
   dataObjectIds: string[];
+  /** Applications hidden **by hand**, by technical id — the last, finest
+   * filter. Exclusions and not selections on purpose: an application newly
+   * admitted by the other axes must arrive visible, where a list of retained
+   * ids would hide it (see `ApplicationVisibilityList`). */
+  excludedIds: string[];
 };
 
 type Props = {
@@ -77,6 +84,10 @@ type Props = {
    * The reset token is shared: one reset collapses both trees. */
   dataObjectTree?: DataObjectTree | null;
   dataObjectCounts?: Map<string, number>;
+  /** What every other axis lets through, **before** the hand-picked
+   * exclusions — the rows of the Applications chapter. Absent, the chapter is
+   * not rendered at all. */
+  selectableApplications?: Application[];
   /** Optional "ACTIONS" row rendered above every filter chapter — the Export
    * PDF / Show in Discover buttons, passed by both pages. Left out, no row
    * is rendered at all. */
@@ -144,16 +155,29 @@ function Toggle<T extends string>({
             type="button"
             onClick={() => onChange(toggled)}
             className={clsx(
-              "relative px-3 py-2 rounded-lg text-xs font-medium border transition-colors",
+              "relative px-3 py-2 rounded-lg text-[11px] font-medium border transition-colors",
               active
                 ? "bg-accent text-accent-fg border-accent"
                 : "bg-surface-2 text-fg border-border hover:border-accent/50",
               optionClassName?.(o)
             )}
           >
-            {/* The count sits outside the flow, so a long label truncates
-              * against it instead of pushing it around. */}
-            <span className={clsx("block truncate", previewCount && "pr-6")}>
+            {/* Wrapped, not truncated. In the 340px panel a two-column chapter
+              * leaves about a hundred pixels of text per chip — less than
+              * "Development Phase" needs, and portfolio names have no length
+              * limit at all. Truncating hid the difference between two labels
+              * sharing a prefix, with no tooltip to recover it. Grid items
+              * stretch, so a chip that takes two lines simply makes its row
+              * taller and its neighbour follows.
+              *
+              * `break-words` is what saves a long unbroken name; the count
+              * stays out of the flow, so it never moves. */}
+            <span
+              className={clsx(
+                "block break-words leading-tight",
+                previewCount && "pr-6",
+              )}
+            >
               {renderLabel ? renderLabel(o) : o}
             </span>
             {count !== null && (
@@ -226,6 +250,7 @@ export default function FilterBar({
   capabilityResetToken = 0,
   dataObjectTree = null,
   dataObjectCounts,
+  selectableApplications,
   actions,
   previewCount,
   value,
@@ -250,9 +275,14 @@ export default function FilterBar({
       operator: value.operator ? 1 : 0,
       criticality: value.businessCriticalities.length,
       capabilities: value.businessCapabilityIds.length,
-    dataObjects: value.dataObjectIds.length,
+      dataObjects: value.dataObjectIds.length,
+      // Only the exclusions that bear on the current result: one that no
+      // longer matches anything has nothing to report.
+      applications: (selectableApplications ?? []).filter((a) =>
+        value.excludedIds.includes(a.id),
+      ).length,
     }),
-    [value],
+    [value, selectableApplications],
   );
   const photoIndex = Math.max(
     0,
@@ -471,6 +501,29 @@ export default function FilterBar({
                 counts={dataObjectCounts ?? EMPTY_COUNTS}
                 value={value.dataObjectIds}
                 onChange={(v) => onChange({ ...value, dataObjectIds: v })}
+              />
+            </FilterSection>
+          )}
+          {/* Last on purpose: it works on what all the others have already
+              let through. Its badge counts the applications hidden **among
+              those** — an exclusion that no longer matches the current result
+              has nothing to report. */}
+          {selectableApplications && (
+            <FilterSection
+              label="Applications"
+              count={counts.applications}
+              open={openSections.has("applications")}
+              onToggle={() => toggleFilterSection("applications")}
+              action={
+                value.excludedIds.length > 0 ? (
+                  <ClearAxisButton onClear={() => onChange({ ...value, excludedIds: [] })} />
+                ) : undefined
+              }
+            >
+              <ApplicationVisibilityList
+                applications={selectableApplications}
+                excludedIds={value.excludedIds}
+                onChange={(v) => onChange({ ...value, excludedIds: v })}
               />
             </FilterSection>
           )}

@@ -101,6 +101,15 @@ export type DiscoverGraphHandle = {
   /** Renders the canvas to an image. Read-only like `snapshot`: the capture
    * works on a clone, so the on-screen zoom and pan are untouched. */
   exportImage: (format: "png" | "svg") => Promise<Blob>;
+  /** How many displayed applications would have to be queried by
+   * `connectVisibleFlows` — everything else is already cached. Synchronous,
+   * so the toolbar can decide whether to warn before starting. */
+  applicationsToQuery: () => number;
+  /** Draws every flow that exists between the applications already on the
+   * canvas and isn't drawn yet. Adds interfaces and flows, **never** an
+   * application. `incomplete` when the repository didn't return everything
+   * asked for, so the caller can say the result may be partial. */
+  connectVisibleFlows: () => Promise<{ flows: number; incomplete: boolean }>;
 };
 
 type Props = {
@@ -183,16 +192,25 @@ function centerOf(node: Node, byId: Map<string, Node>): { x: number; y: number }
 function collapseToApplications(
   edgeMeta: DiscoverEdge[],
   providerOf: (interfaceId: string) => string | undefined,
-): { sourceId: string; targetId: string }[] {
-  const seen = new Set<string>();
-  const result: { sourceId: string; targetId: string }[] = [];
+): { sourceId: string; targetId: string; interfaceIds: string[] }[] {
+  const byPair = new Map<string, { sourceId: string; targetId: string; interfaceIds: string[] }>();
+  const result: { sourceId: string; targetId: string; interfaceIds: string[] }[] = [];
   for (const e of edgeMeta) {
     const targetId = providerOf(e.interfaceId);
     if (!targetId || targetId === e.consumerId) continue;
     const key = `${e.consumerId}|${targetId}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    result.push({ sourceId: e.consumerId, targetId });
+    const existing = byPair.get(key);
+    if (existing) {
+      // Which interfaces a folded flow stands for: the arrow has to carry
+      // the union of what they transport (see the `edges` memo).
+      if (!existing.interfaceIds.includes(e.interfaceId)) {
+        existing.interfaceIds.push(e.interfaceId);
+      }
+      continue;
+    }
+    const entry = { sourceId: e.consumerId, targetId, interfaceIds: [e.interfaceId] };
+    byPair.set(key, entry);
+    result.push(entry);
   }
   return result;
 }
@@ -292,7 +310,12 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
   const [openInterfaceIds, setOpenInterfaceIds] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
-  const { showInfoIcons } = useDiscoverDisplaySettings();
+  const { showInfoIcons, boxWidth } = useDiscoverDisplaySettings();
+  /** Read by callbacks that must not be rebuilt on every tick of the Box
+   * width slider — `makeApplicationNode`'s per-node `onResize` closure above
+   * all, whose identity is baked into every application node's data. */
+  const boxWidthRef = useRef(boxWidth);
+  boxWidthRef.current = boxWidth;
   const containerRef = useRef<HTMLDivElement>(null);
   /** Captured via `onInit` instead of `useReactFlow()` so the component
    * doesn't have to be split around a `ReactFlowProvider` just to re-fit the
@@ -411,22 +434,34 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
     );
   }, []);
 
-  const ensureAppInterfaces = useCallback(
-    async (appId: string): Promise<ApplicationInterfacesNode | null> => {
-      const cached = appInterfacesCache.current.get(appId);
-      if (cached) return cached;
-      const data = await fetchApplicationInterfaces(appId);
-      if (!data) return null;
-      appInterfacesCache.current.set(appId, data);
+  /** Files one application's interfaces away, both its own entry and every
+   * interface fact sheet the response carried. Single- and multi-application
+   * queries share the same GraphQL text, so an entry cached here from one is
+   * interchangeable with an entry from the other — which is what lets the
+   * batch fetches below skip whatever a context menu has already loaded. */
+  const cacheApplicationInterfaces = useCallback(
+    (data: ApplicationInterfacesNode) => {
+      appInterfacesCache.current.set(data.id, data);
       for (const edge of data.relProviderApplicationToInterface?.edges ?? []) {
         if (edge.node.factSheet) cacheInterfaceFactSheet(edge.node.factSheet);
       }
       for (const edge of data.relConsumerApplicationToInterface?.edges ?? []) {
         if (edge.node.factSheet) cacheInterfaceFactSheet(edge.node.factSheet);
       }
-      return data;
     },
     [cacheInterfaceFactSheet],
+  );
+
+  const ensureAppInterfaces = useCallback(
+    async (appId: string): Promise<ApplicationInterfacesNode | null> => {
+      const cached = appInterfacesCache.current.get(appId);
+      if (cached) return cached;
+      const data = await fetchApplicationInterfaces(appId);
+      if (!data) return null;
+      cacheApplicationInterfaces(data);
+      return data;
+    },
+    [cacheApplicationInterfaces],
   );
 
   const onNodesChange = useCallback((changes: NodeChange[]) => {
@@ -467,7 +502,7 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
       setNodes((current) => {
         const node = current.find((n) => n.id === appId);
         if (!node || node.type !== "application") return current;
-        const oldWidth = (node.data as ApplicationNodeData).width ?? APP_NODE_WIDTH;
+        const oldWidth = (node.data as ApplicationNodeData).width ?? boxWidthRef.current;
         const circleCenterXs = current
           .filter((n) => n.type === "interface" && interfaceProviderRef.current.get(n.id) === appId)
           .map((n) => n.position.x + INTERFACE_NODE_SIZE / 2);
@@ -489,7 +524,8 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
             return {
               ...n,
               position: growth !== 0 ? { ...n.position, x: n.position.x - growth } : n.position,
-              data: { ...n.data, width: newWidth },
+              // Pinned from here on: a width chosen by hand outranks the slider.
+              data: { ...n.data, width: newWidth, widthPinned: true },
             };
           }
           if (
@@ -506,6 +542,76 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
     [],
   );
 
+  /** Applies the Box width slider to every rectangle the user hasn't resized
+   * by hand.
+   *
+   * The floor is the same one `handleResizeApplication` applies to a
+   * right-edge drag: a box never shrinks past the centre of an interface
+   * circle it carries, which would leave the circle hanging outside its own
+   * provider. So in the Interfaces view a loaded box can stay wider than the
+   * slider says — deliberately.
+   *
+   * Only the right border moves (the node's own position is untouched), so
+   * unlike the left-edge drag there is nothing to compensate on the child
+   * circles — but a circle parked on the *right* border would end up floating
+   * inside a widened box, so every circle of a resized box is re-snapped onto
+   * the new perimeter with the same projection `onNodesChange` applies to a
+   * drag. Doing it here rather than waiting for xyflow's measurement echo
+   * avoids a visible one-frame jump. As with a manual drag, a circle near a
+   * corner may land on the adjacent side.
+   *
+   * `isBaselineUpdateRef` because this is a display preference, not an edit:
+   * without it, moving the slider would flag a freshly loaded diagram as
+   * having unsaved changes. It is set only when something actually changes,
+   * so a no-op run never swallows the flag for a later genuine edit.
+   *
+   * Depends on `nodes` as well as the slider so the per-box floor is
+   * re-evaluated when circles are revealed or hidden, and reads `nodesRef`
+   * (synced on every render) so the flag is raised outside the state updater,
+   * which React may call twice. The early return makes the extra passes
+   * free — and it converges: the projection can only move a circle's centre
+   * to a value the new width already accommodates. */
+  useEffect(() => {
+    const half = INTERFACE_NODE_SIZE / 2;
+    const current = nodesRef.current;
+
+    const floorByApp = new Map<string, number>();
+    for (const n of current) {
+      if (n.type !== "interface") continue;
+      const providerId = n.parentId ?? interfaceProviderRef.current.get(n.id);
+      if (!providerId) continue;
+      floorByApp.set(providerId, Math.max(floorByApp.get(providerId) ?? 0, n.position.x + half));
+    }
+
+    const resized = new Map<string, number>();
+    for (const n of current) {
+      if (n.type !== "application") continue;
+      const data = n.data as unknown as ApplicationNodeData;
+      if (data.widthPinned) continue;
+      const width = Math.max(boxWidth, MIN_APP_NODE_WIDTH, floorByApp.get(n.id) ?? 0);
+      if (data.width !== width) resized.set(n.id, width);
+    }
+    if (resized.size === 0) return;
+
+    const next = current.map((n) => {
+      if (n.type === "application") {
+        const width = resized.get(n.id);
+        return width === undefined ? n : { ...n, data: { ...n.data, width } };
+      }
+      if (n.type !== "interface") return n;
+      const providerId = n.parentId ?? interfaceProviderRef.current.get(n.id);
+      const width = providerId ? resized.get(providerId) : undefined;
+      if (width === undefined) return n;
+      const center = { x: n.position.x + half, y: n.position.y + half };
+      const projected = projectPointToRectanglePerimeter(center, width, APP_NODE_HEIGHT);
+      const position = { x: projected.x - half, y: projected.y - half };
+      return position.x === n.position.x && position.y === n.position.y ? n : { ...n, position };
+    });
+
+    isBaselineUpdateRef.current = true;
+    setNodes(next);
+  }, [boxWidth, nodes, setNodes]);
+
   const makeApplicationNode = useCallback(
     (app: DiscoverApplicationNode, position: { x: number; y: number }, isRoot: boolean): Node => ({
       id: app.id,
@@ -516,7 +622,9 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
         externalId: app.externalId,
         managerName: resolveManagerName(app.id) ?? app.managerName,
         isRoot,
-        width: APP_NODE_WIDTH,
+        // Follows the Box width slider until the user drags a handle.
+        width: boxWidthRef.current,
+        widthPinned: false,
         onResize: (edge, proposedWidth) => handleResizeApplication(app.id, edge, proposedWidth),
       } satisfies ApplicationNodeData,
     }),
@@ -630,7 +738,12 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
         }
         const byId = new Map(current.map((n) => [n.id, n]));
         const anchor = absolutePosition(current[current.length - 1], byId);
-        const position = placeNewApplicationNode(anchor, "right", boxesOf(current));
+        const position = placeNewApplicationNode(
+          anchor,
+          "right",
+          boxesOf(current),
+          boxWidthRef.current,
+        );
         return [...current, makeApplicationNode(app, position, true)];
       });
     },
@@ -671,17 +784,9 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
         const fetched = await fetchApplicationsInterfaces(ids);
         if (cancelled) return;
 
-        // Same cache priming as `ensureAppInterfaces`, so the context menus
-        // opened on a seeded node don't re-fetch what we already hold.
-        for (const node of fetched) {
-          appInterfacesCache.current.set(node.id, node);
-          for (const edge of node.relProviderApplicationToInterface?.edges ?? []) {
-            if (edge.node.factSheet) cacheInterfaceFactSheet(edge.node.factSheet);
-          }
-          for (const edge of node.relConsumerApplicationToInterface?.edges ?? []) {
-            if (edge.node.factSheet) cacheInterfaceFactSheet(edge.node.factSheet);
-          }
-        }
+        // So the context menus opened on a seeded node don't re-fetch what we
+        // already hold.
+        for (const node of fetched) cacheApplicationInterfaces(node);
 
         const { interfaces, edges } = toInternalRelations(fetched, selectedIds);
         const byProvider = new Map<string, DiscoverInterfaceNode[]>();
@@ -703,6 +808,7 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
             source: e.consumerId,
             target: providerOf.get(e.interfaceId) ?? e.consumerId,
           })),
+          boxWidthRef.current,
         );
         if (cancelled || superseded()) return;
 
@@ -726,7 +832,7 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
         setSeedError(e instanceof Error ? e.message : String(e));
         // The rectangles still belong on screen — only their relations
         // failed to load; fall back to the edgeless packing.
-        const packed = await layoutRootApplications(ids).catch(
+        const packed = await layoutRootApplications(ids, [], boxWidthRef.current).catch(
           () => new Map<string, { x: number; y: number }>(),
         );
         if (cancelled || superseded()) return;
@@ -748,7 +854,7 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
       cancelled = true;
       if (!committed) seededRef.current = null;
     };
-  }, [seed, makeApplicationNode, placeProviderInterfaces, cacheInterfaceFactSheet]);
+  }, [seed, makeApplicationNode, placeProviderInterfaces, cacheApplicationInterfaces]);
 
   /**
    * Draws a saved diagram, replacing whatever is on the canvas.
@@ -784,15 +890,7 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
         const fetched = await fetchApplicationsInterfaces(applicationIds);
         if (cancelled || superseded()) return;
 
-        for (const node of fetched) {
-          appInterfacesCache.current.set(node.id, node);
-          for (const edge of node.relProviderApplicationToInterface?.edges ?? []) {
-            if (edge.node.factSheet) cacheInterfaceFactSheet(edge.node.factSheet);
-          }
-          for (const edge of node.relConsumerApplicationToInterface?.edges ?? []) {
-            if (edge.node.factSheet) cacheInterfaceFactSheet(edge.node.factSheet);
-          }
-        }
+        for (const node of fetched) cacheApplicationInterfaces(node);
 
         const { interfaces, edges } = toDiagramRelations(fetched);
         const interfaceById = new Map(interfaces.map((iface) => [iface.id, iface]));
@@ -847,10 +945,12 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
               positionById.get(app.id) ?? { x: 0, y: 0 },
               rootIdsRef.current.has(app.id),
             );
+            // A saved width only ever means "the user resized this one", so
+            // it comes back pinned; the rest follow the Box width slider.
             const width = widthById.get(app.id);
             return width === undefined
               ? node
-              : { ...node, data: { ...node.data, width } };
+              : { ...node, data: { ...node.data, width, widthPinned: true } };
           });
           const circles = restoredInterfaces.map((saved) =>
             makeInterfaceNode(
@@ -881,7 +981,7 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
     // `onLoadSettled` is deliberately out: the parent recreates nothing, but
     // an unstable callback would re-run a whole load.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pendingLoad, makeApplicationNode, cacheInterfaceFactSheet, closeAllInfo]);
+  }, [pendingLoad, makeApplicationNode, cacheApplicationInterfaces, closeAllInfo]);
 
   const removeApplication = useCallback((id: string) => {
     rootIdsRef.current.delete(id);
@@ -955,7 +1055,12 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
         let cursor = anchor;
         for (const provider of providers) {
           if (existingIds.has(provider.id)) continue;
-          const position = placeNewApplicationNode(cursor, "left", boxesOf(next));
+          const position = placeNewApplicationNode(
+            cursor,
+            "left",
+            boxesOf(next),
+            boxWidthRef.current,
+          );
           next = [...next, makeApplicationNode(provider, position, false)];
           existingIds.add(provider.id);
           cursor = position;
@@ -1003,7 +1108,12 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
           return iface ? absolutePosition(iface, byId) : { x: 0, y: 0 };
         };
         if (provider && !existingIds.has(provider.id)) {
-          const position = placeNewApplicationNode(ifaceAnchor(), "left", boxesOf(next));
+          const position = placeNewApplicationNode(
+            ifaceAnchor(),
+            "left",
+            boxesOf(next),
+            boxWidthRef.current,
+          );
           next = [...next, makeApplicationNode(provider, position, false)];
           existingIds.add(provider.id);
           interfaceProviderRef.current.set(ifaceId, provider.id);
@@ -1013,7 +1123,12 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
         let cursor = ifaceAnchor();
         const added: Node[] = [];
         for (const c of missingConsumers) {
-          const position = placeNewApplicationNode(cursor, "right", boxesOf([...next, ...added]));
+          const position = placeNewApplicationNode(
+            cursor,
+            "right",
+            boxesOf([...next, ...added]),
+            boxWidthRef.current,
+          );
           added.push(makeApplicationNode(c, position, false));
           cursor = position;
         }
@@ -1037,8 +1152,29 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
         await revealInterfaceDependencies(nodeId);
         return;
       }
+      // The interfaces this application provides, **from the model** rather
+      // than from what happens to be on screen. Walking the visible ones was
+      // the whole bug: the consumers hang off these interfaces, so with none
+      // revealed the loop ran empty and the click did nothing — with no way
+      // out at all in the simplified view, where "Show API" is hidden. And in
+      // the complex view the circles aren't optional either: a flow there is
+      // drawn *to a circle*, so without it a consumer couldn't be connected.
+      // Cached after the first call, so a second click asks for nothing.
+      const data = await ensureAppInterfaces(nodeId);
+      const provided = data ? toInboundInterfaces(data) : [];
+      // Skips whatever is already there, so replaying the command adds
+      // nothing.
+      if (provided.length > 0) {
+        setNodes((current) => placeProviderInterfaces(current, nodeId, provided));
+      }
+
       const visibleIds = new Set(nodesRef.current.map((n) => n.id));
       const attached = new Set<string>();
+      // Built from `provided`, never from the nodes: `setNodes` above hasn't
+      // landed yet, so reading the canvas here would reproduce the very bug
+      // this fixes, one pass late. When the query failed, `provided` is empty
+      // and the visible providers below are all we can fall back on.
+      for (const iface of provided) attached.add(iface.id);
       for (const [ifaceId, providerId] of interfaceProviderRef.current) {
         if (providerId === nodeId && visibleIds.has(ifaceId)) attached.add(ifaceId);
       }
@@ -1049,8 +1185,97 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
         await revealInterfaceDependencies(ifaceId);
       }
     },
-    [revealInterfaceDependencies],
+    [ensureAppInterfaces, placeProviderInterfaces, revealInterfaceDependencies],
   );
+
+  /** Application rectangles currently on the canvas whose interfaces haven't
+   * been loaded yet — what the "connect" action below would actually have to
+   * ask LeanIX for. The toolbar reads it *before* deciding whether to warn:
+   * counting the rectangles instead would raise the warning on an ordinary
+   * working diagram, and a warning that always shows stops protecting. */
+  const applicationsToQuery = useCallback((): number => {
+    let count = 0;
+    for (const node of nodesRef.current) {
+      if (node.type !== "application") continue;
+      if (!appInterfacesCache.current.has(node.id)) count += 1;
+    }
+    return count;
+  }, []);
+
+  /**
+   * Draws every flow that exists **between the applications already on the
+   * canvas** and isn't drawn yet.
+   *
+   * A diagram is built by successive additions, and nothing makes the links
+   * between two applications that arrived separately appear: they can sit
+   * side by side, exchanging data, with no line between them. This closes the
+   * graph on itself.
+   *
+   * It adds interfaces and flows, never an application — a structural
+   * guarantee rather than a rule to enforce, since `toInternalRelations`
+   * returns nothing else. That is what makes the action predictable before
+   * the click and free to replay: the result is bounded by what is already on
+   * screen. Reaching further is the context menu's job, application by
+   * application, with counters that announce what a click will bring in.
+   */
+  const connectVisibleFlows = useCallback(async (): Promise<{
+    flows: number;
+    incomplete: boolean;
+  }> => {
+    const appIds = nodesRef.current
+      .filter((n) => n.type === "application")
+      .map((n) => n.id);
+    if (appIds.length < 2) return { flows: 0, incomplete: false };
+
+    const missing = appIds.filter((id) => !appInterfacesCache.current.has(id));
+    let incomplete = false;
+    if (missing.length > 0) {
+      // Chunked and parallel inside (`fetchApplicationsInterfaces`), so a
+      // hundred applications is a handful of requests, not a hundred.
+      const fetched = await fetchApplicationsInterfaces(missing);
+      for (const node of fetched) cacheApplicationInterfaces(node);
+      incomplete = fetched.length < missing.length;
+    }
+
+    const datas = appIds
+      .map((id) => appInterfacesCache.current.get(id))
+      .filter((d): d is ApplicationInterfacesNode => !!d);
+
+    // The same function that builds the catalogue-seeded graph: interfaces
+    // whose provider is in the set *and* which have a consumer in the set,
+    // deduplicated, with their edges. It reads the **provider** side, so a
+    // link A → B is found in B's data — which is why a failed query shows up
+    // as a missing link rather than an error, hence `incomplete`.
+    const { interfaces, edges } = toInternalRelations(datas, new Set(appIds));
+
+    // Counted here, against the ref, and never inside the updater below:
+    // StrictMode invokes updaters twice, which would double the tally.
+    const known = new Set(edgeMetaRef.current.map((e) => e.id));
+    const fresh = edges.filter((e) => !known.has(e.id));
+
+    if (interfaces.length > 0) {
+      const byProvider = new Map<string, DiscoverInterfaceNode[]>();
+      for (const iface of interfaces) {
+        const list = byProvider.get(iface.providerId);
+        if (list) list.push(iface);
+        else byProvider.set(iface.providerId, [iface]);
+      }
+      // One write for the whole canvas: looping `setNodes` per application
+      // would make the graph flicker and re-render React Flow each time.
+      setNodes((current) => {
+        let next = current;
+        for (const [providerId, ifaces] of byProvider) {
+          next = placeProviderInterfaces(next, providerId, ifaces);
+        }
+        return next;
+      });
+    }
+    if (fresh.length > 0) {
+      setEdgeMeta((current) => [...current, ...fresh]);
+    }
+
+    return { flows: fresh.length, incomplete };
+  }, [cacheApplicationInterfaces, placeProviderInterfaces]);
 
   const handleHide = useCallback(
     (nodeId: string) => {
@@ -1106,8 +1331,11 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
             id: n.id,
             x: n.position.x,
             y: n.position.y,
-            // Only when the user actually resized the box.
-            ...(width !== undefined && width !== APP_NODE_WIDTH ? { width } : {}),
+            // Only when the user actually resized the box — the others
+            // follow whatever Box width the reader has set.
+            ...((n.data as unknown as ApplicationNodeData).widthPinned && width !== undefined
+              ? { width }
+              : {}),
           };
         }),
       interfaces: current
@@ -1201,9 +1429,11 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
       // can't disagree. Both ends re-checked so a pruning race can't leave a
       // dangling link.
       edges: simplified
-        ? collapseToApplications(edgeMetaRef.current, providerOf).filter(
-            (e) => present.has(e.sourceId) && present.has(e.targetId),
-          )
+        ? collapseToApplications(edgeMetaRef.current, providerOf)
+            .filter((e) => present.has(e.sourceId) && present.has(e.targetId))
+            // The folded interfaces are geometry for the canvas, not part of
+            // the exported topology.
+            .map(({ sourceId, targetId }) => ({ sourceId, targetId }))
         : edgeMetaRef.current
             .filter((e) => present.has(e.consumerId) && present.has(e.interfaceId))
             .map((e) => ({ sourceId: e.consumerId, targetId: e.interfaceId })),
@@ -1222,6 +1452,21 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
   const edges = useMemo<Edge[]>(() => {
     const byId = new Map(nodes.map((n) => [n.id, n]));
 
+    /** What an interface transports, ready to be hung on an arrow. Already
+     * loaded with the graph — nothing is fetched for this. Sorted by name so
+     * the dots come out in the same order on every arrow that carries the
+     * same data. */
+    const dataObjectsOf = (interfaceIds: string[]) => {
+      const byDataObject = new Map<string, { id: string; name: string }>();
+      for (const interfaceId of interfaceIds) {
+        const data = byId.get(interfaceId)?.data as unknown as InterfaceNodeData | undefined;
+        for (const o of data?.dataObjects ?? []) {
+          if (!byDataObject.has(o.id)) byDataObject.set(o.id, { id: o.id, name: o.name });
+        }
+      }
+      return [...byDataObject.values()].sort((a, b) => a.name.localeCompare(b.name));
+    };
+
     if (simplified) {
       // Grouped by *unordered* pair so that A → B and B → A bend apart
       // instead of landing on the exact same line.
@@ -1238,7 +1483,7 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
         const pair = [sourceId, targetId].sort().join("|");
         totalPerPair.set(pair, (totalPerPair.get(pair) ?? 0) + 1);
       }
-      for (const { sourceId, targetId } of collapsed) {
+      for (const { sourceId, targetId, interfaceIds } of collapsed) {
         const source = byId.get(sourceId);
         const target = byId.get(targetId);
         if (!source || !target) continue;
@@ -1261,6 +1506,9 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
             ty: to.y,
             bend: rank % 2 === 0 ? 1 : -1,
             parallel: (totalPerPair.get(pair) ?? 1) > 1,
+            // The union of what every folded interface carries — the only
+            // reading consistent with what this arrow stands for on screen.
+            dataObjects: dataObjectsOf(interfaceIds),
           } satisfies GraphEdgeData,
           markerEnd: { type: MarkerType.ArrowClosed, color: "var(--color-accent)" },
           style: { stroke: "var(--color-accent)" },
@@ -1296,6 +1544,10 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
             ty: to.y,
             bend: i % 2 === 0 ? 1 : -1,
             parallel: group.length > 1,
+            // What the targeted interface transports. Two consumers of the
+            // same interface therefore carry the same dots — the same data
+            // flowing twice, not a duplicate to fix.
+            dataObjects: dataObjectsOf([e.interfaceId]),
           } satisfies GraphEdgeData,
           markerEnd: { type: MarkerType.ArrowClosed, color: "var(--color-accent)" },
           style: { stroke: "var(--color-accent)" },
@@ -1837,8 +2089,19 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
       getDiagram,
       setAxisHighlight,
       exportImage,
+      applicationsToQuery,
+      connectVisibleFlows,
     }),
-    [addApplication, removeApplication, snapshot, getDiagram, setAxisHighlight, exportImage],
+    [
+      addApplication,
+      removeApplication,
+      snapshot,
+      getDiagram,
+      setAxisHighlight,
+      exportImage,
+      applicationsToQuery,
+      connectVisibleFlows,
+    ],
   );
 
   return (

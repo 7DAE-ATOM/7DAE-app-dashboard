@@ -1,6 +1,6 @@
 apiVersion: v2
-name: ltm-dashboard
-description: Helm chart for deploying ltm-dashboard served by Nginx
+name: app-dashboard
+description: Helm chart for deploying app-dashboard served by Nginx
 type: application
 version: 0.1.0
 appVersion: "0.1.0"

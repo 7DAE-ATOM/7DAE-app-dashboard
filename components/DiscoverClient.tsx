@@ -14,6 +14,11 @@ import DiscoverExportMenu, {
 } from "@/components/discover/DiscoverExportMenu";
 import DiscoverViewModeToggle from "@/components/discover/DiscoverViewModeToggle";
 import DiscoverInfoIconsToggle from "@/components/discover/DiscoverInfoIconsToggle";
+import LegendColorsSync from "@/components/discover/LegendColorsSync";
+import DiscoverConnectFlowsButton from "@/components/discover/DiscoverConnectFlowsButton";
+import DiscoverNotice from "@/components/discover/DiscoverNotice";
+import ConfirmDialog from "@/components/ConfirmDialog";
+import DiscoverFlowAnimationToggle from "@/components/discover/DiscoverFlowAnimationToggle";
 import DiscoverHighlightPanel from "@/components/discover/DiscoverHighlightPanel";
 import DiagramSaveControls from "@/components/discover/DiagramSaveControls";
 import type {
@@ -28,6 +33,11 @@ import {
   writeDiagramSave,
   type DiscoverDiagramSave,
 } from "@/lib/discoverDiagramSaves";
+import { dataObjectLegend } from "@/lib/discoverDataObjectLegend";
+import { capabilityLegend } from "@/lib/discoverCapabilityLegend";
+import { useDataObjectTree } from "@/lib/useDataObjectTree";
+import { useBusinessCapabilityTree } from "@/lib/useBusinessCapabilityTree";
+import type { CanvasContents } from "@/lib/discoverCanvasContents";
 import { toMermaid } from "@/lib/discoverMermaid";
 import { downloadBlob, exportDateStamp } from "@/lib/downloadBlob";
 import { ImageExportTooLargeError } from "@/lib/discoverImageExport";
@@ -36,6 +46,28 @@ const DiscoverGraph = dynamic(() => import("@/components/discover/DiscoverGraph"
   ssr: false,
   loading: () => <div className="h-full w-full bg-surface-2 skeleton-pulse" />,
 });
+
+/* The two axes read the canvas differently, and that is the whole reason the
+ * legend loader takes these as props: an interface carries data objects, an
+ * application carries capabilities. What they return decides which trees sit
+ * at the wide end of the hue wheel. Declared at module scope so their identity
+ * is stable across renders. */
+const dataObjectsOnCanvas = (contents: CanvasContents) =>
+  new Set(contents.interfaces.flatMap((i) => i.dataObjectIds));
+
+const capabilitiesOnCanvas = (
+  contents: CanvasContents,
+  applicationsById: Map<string, Application>,
+) =>
+  new Set(
+    contents.applicationIds.flatMap(
+      (id) => applicationsById.get(id)?.businessCapabilities.map((c) => c.id) ?? [],
+    ),
+  );
+
+/** Above this many applications still to be read, "connect the flows" asks
+ * first. It warns, it never blocks. */
+const CONNECT_CONFIRM_THRESHOLD = 50;
 
 function toDiscoverApplicationNode(app: Application): DiscoverApplicationNode {
   return {
@@ -307,6 +339,52 @@ export default function DiscoverClient() {
     }
   }, []);
 
+  /* ---------------------------------------------------------------- *
+   * Connect the flows between the applications already displayed.
+   * ---------------------------------------------------------------- */
+  const [connecting, setConnecting] = useState(false);
+  const [connectNotice, setConnectNotice] = useState<string | null>(null);
+  /** Non-null while the confirmation is up; holds the number of applications
+   * that would have to be queried, which is what the message announces. */
+  const [pendingConnect, setPendingConnect] = useState<number | null>(null);
+
+  const runConnectFlows = useCallback(async () => {
+    setConnectNotice(null);
+    setConnecting(true);
+    try {
+      const result = await graphRef.current?.connectVisibleFlows();
+      if (!result) return;
+      const partial = result.incomplete
+        ? " Some applications could not be read, so the result may be partial."
+        : "";
+      setConnectNotice(
+        result.flows === 0
+          ? `No missing flow between the applications shown.${partial}`
+          : `${result.flows} flow${result.flows > 1 ? "s" : ""} added between the applications shown.${partial}`,
+      );
+    } catch (e) {
+      setConnectNotice(
+        `Connecting flows failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    } finally {
+      setConnecting(false);
+    }
+  }, []);
+
+  /** The warning is about a **volume** — a mass of links appearing at once,
+   * and a heavy query — so it counts what actually has to be fetched, not
+   * what is on screen: everything already explored is cached, and a warning
+   * raised on an ordinary working diagram would soon be clicked through
+   * without being read. */
+  const handleConnectFlows = useCallback(() => {
+    const toQuery = graphRef.current?.applicationsToQuery() ?? 0;
+    if (toQuery > CONNECT_CONFIRM_THRESHOLD) {
+      setPendingConnect(toQuery);
+      return;
+    }
+    void runConnectFlows();
+  }, [runConnectFlows]);
+
   if (error) throw error;
 
   return (
@@ -316,6 +394,12 @@ export default function DiscoverClient() {
         <SelectedApplicationsBar applications={selected} onRemove={handleRemove} />
         <div className="ml-auto flex items-center gap-2">
           <DiscoverViewModeToggle />
+          <DiscoverConnectFlowsButton
+            disabled={selected.length === 0}
+            busy={connecting}
+            onClick={handleConnectFlows}
+          />
+          <DiscoverFlowAnimationToggle />
           <DiscoverInfoIconsToggle />
           {/* Roots are the graph's only anchors, and anything no longer
               reachable from one is pruned — so "no chip" means "empty
@@ -374,45 +458,43 @@ export default function DiscoverClient() {
               graphRef={graphRef}
               applicationsById={applicationsById}
             />
+            {/* Render nothing: they publish the two palettes, which have to
+                survive the panel being folded. Half a step of hue apart, so
+                every capability colour lands between two data-object ones. */}
+            <LegendColorsSync
+              legend={dataObjectLegend}
+              useTree={useDataObjectTree}
+              canvasIds={dataObjectsOnCanvas}
+              applicationsById={applicationsById}
+            />
+            <LegendColorsSync
+              legend={capabilityLegend}
+              useTree={useBusinessCapabilityTree}
+              canvasIds={capabilitiesOnCanvas}
+              applicationsById={applicationsById}
+              hueRotation={22}
+            />
             {/* top-14: below the graph's own seed loading/error strip. */}
             {seedExpired && !expiredDismissed && (
-              <div className="absolute left-1/2 top-14 z-10 flex -translate-x-1/2 items-center gap-3 rounded border border-border bg-surface px-3 py-2 text-xs text-muted shadow-lg">
-                <span>This Discover link has expired — reopen it from the catalogue.</span>
-                <button
-                  type="button"
-                  onClick={() => setExpiredDismissed(true)}
-                  className="shrink-0 hover:text-fg"
-                >
-                  Dismiss
-                </button>
-              </div>
+              <DiscoverNotice onDismiss={() => setExpiredDismissed(true)}>
+                This Discover link has expired — reopen it from the catalogue.
+              </DiscoverNotice>
             )}
             {unresolved > 0 && !noticeDismissed && (
-              <div className="absolute left-1/2 top-14 z-10 flex -translate-x-1/2 items-center gap-3 rounded border border-border bg-surface px-3 py-2 text-xs text-muted shadow-lg">
-                <span>
-                  {unresolved} application{unresolved > 1 ? "s" : ""} from this link could not be
-                  shown.
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setNoticeDismissed(true)}
-                  className="shrink-0 hover:text-fg"
-                >
-                  Dismiss
-                </button>
-              </div>
+              <DiscoverNotice onDismiss={() => setNoticeDismissed(true)}>
+                {unresolved} application{unresolved > 1 ? "s" : ""} from this link could not be
+                shown.
+              </DiscoverNotice>
             )}
             {exportError && (
-              <div className="absolute left-1/2 top-14 z-10 flex -translate-x-1/2 items-center gap-3 rounded border border-border bg-surface px-3 py-2 text-xs text-muted shadow-lg">
-                <span>{exportError}</span>
-                <button
-                  type="button"
-                  onClick={() => setExportError(null)}
-                  className="shrink-0 hover:text-fg"
-                >
-                  Dismiss
-                </button>
-              </div>
+              <DiscoverNotice onDismiss={() => setExportError(null)}>
+                {exportError}
+              </DiscoverNotice>
+            )}
+            {connectNotice && (
+              <DiscoverNotice onDismiss={() => setConnectNotice(null)}>
+                {connectNotice}
+              </DiscoverNotice>
             )}
             {selected.length === 0 && (
               <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
@@ -424,6 +506,21 @@ export default function DiscoverClient() {
           </>
         )}
       </div>
+      {/* Last, so it sits above every panel and strip of the page. */}
+      {pendingConnect !== null && (
+        <ConfirmDialog
+          title="Large diagram"
+          message={
+            `${pendingConnect} applications still have to be read before their flows can be ` +
+            `connected, and the diagram may gain a lot of links at once. Continue?`
+          }
+          onConfirm={() => {
+            setPendingConnect(null);
+            void runConnectFlows();
+          }}
+          onCancel={() => setPendingConnect(null)}
+        />
+      )}
     </div>
   );
 }
