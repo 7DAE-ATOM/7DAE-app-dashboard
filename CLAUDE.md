@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A single Next.js 15 / React 19 app at the repo root, plus a lightweight specification folder:
 
-- Root — the **`app-dashboard`** application. Visual dashboard of Airbus **Lab Test Means** (LTM) backed by the live `atom-synchronizer-dev` API. Runs on port **3001**.
+- Root — the **`app-dashboard`** application. Visual dashboard of Airbus **Application** backed by the live `atom-synchronizer-dev` API. Runs on port **3001**.
 - `_specification/vibe coding/` — lightweight feature specs, one file per feature. This is where `/sweetforge.vibe` writes new specs.
 - `deployment/nextjs-hello-chart/` — Helm chart for AFTER (Airbus Kubernetes platform). Service expects the container to listen on **8080** and exposes `/health` for liveness/readiness probes.
 
