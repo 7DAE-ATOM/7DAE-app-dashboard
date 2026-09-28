@@ -420,6 +420,28 @@ export async function fetchApplicationLinks(
   return (await res.json()) as ApplicationLinkDto[];
 }
 
+/** `GET /api/infos/me` — identity of the calling user, decoded by the backend
+ * from the `Authorization: Bearer` JWT the AFTER gateway injects. Every field
+ * is nullable: it is only filled when the corresponding claim is in the token.
+ * Display-only — never base an access decision on it client-side. */
+export type CurrentUserDto = {
+  authenticated: boolean | null;
+  login: string | null;
+  email: string | null;
+  firstName: string | null;
+  lastName: string | null;
+  displayName: string | null;
+  department: string | null;
+  company: string | null;
+};
+
+export async function fetchCurrentUser(): Promise<CurrentUserDto> {
+  const url = `${NEXT_PUBLIC_ATOM_API_BASE_URL}/api/infos/me`;
+  const res = await atomFetch(url, {});
+  if (!res.ok) httpError(res, url);
+  return (await res.json()) as CurrentUserDto;
+}
+
 /* ---------------------------------------------------------------------- *
  * Discover graph — Application/Interface FactSheet model (distinct from the
  * simplified `/links` REST endpoint above, and from `ApplicationNode`). See
