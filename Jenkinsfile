@@ -77,7 +77,12 @@ pipeline {
                         
 						
 						// On définit les variables pour les étapes suivantes (Docker/Helm)
-						env.FULL_IMAGE_NAME = "${env.ARTIFACTORY_HOST}/transversal/${env.APP_NAME}:${env.PROJECT_VERSION}"
+						// L'URL du backend est figée dans out/ au build (NEXT_PUBLIC_*) : une
+						// image val et une image prod ne sont PAS interchangeables. Le tag porte
+						// donc l'environnement, sinon un build val écrase <version> et le
+						// prochain pull de prod (pullPolicy: Always) récupère le backend val.
+						env.IMAGE_TAG = "${env.PROJECT_VERSION}-${env.TARGET_ENV}"
+						env.FULL_IMAGE_NAME = "${env.ARTIFACTORY_HOST}/transversal/${env.APP_NAME}:${env.IMAGE_TAG}"
 					}
 				}
 			}
@@ -137,12 +142,12 @@ pipeline {
                 checkout scm
                 dir("deployment") {
                     sh "helm repo update"
-                    echo "Deploying ${APP_NAME} to namespace: ${AFTER_APP_NAMESPACE} using values-${TARGET_ENV}.yaml with tag: ${env.PROJECT_VERSION}"
+                    echo "Deploying ${APP_NAME} to namespace: ${AFTER_APP_NAMESPACE} using values-${TARGET_ENV}.yaml with tag: ${env.IMAGE_TAG}"
                     sh """
                         helm upgrade ${APP_NAME} ./helm \
                         --values ./values-${TARGET_ENV}.yaml \
                         --set app.image.name=${env.ARTIFACTORY_HOST}/transversal/${env.APP_NAME} \
-                        --set app.image.tag=${env.PROJECT_VERSION} \
+                        --set app.image.tag=${env.IMAGE_TAG} \
                         --kubeconfig=${KUBECONFIG} \
                         --namespace ${AFTER_APP_NAMESPACE} \
                         --kubeconfig=${KUBECONFIG} \
