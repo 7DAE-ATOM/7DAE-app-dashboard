@@ -24,11 +24,9 @@ function SectionLabel({ children }: Readonly<{ children: React.ReactNode }>) {
  * What flows through an interface: the Data Objects it exchanges, each with
  * its name and description.
  *
- * The header carries the **first data object's name** (the interface's own
- * name is only a fallback when it exchanges nothing): the description is what
- * the card exists for, and repeating the interface name above it would push
- * the useful text down. Further data objects follow as their own titled
- * sections.
+ * Read top to bottom: the header names the **interface** (its protocol when
+ * it has no name), the body lists every data object — name, then
+ * description — and the protocol closes the card.
  *
  * Opened from the info icon at the centre of the interface circle
  * (`InterfaceNode.tsx`), and built on the same gestures as
@@ -60,7 +58,7 @@ export default function InterfaceInfoCard({
     if (cardRef.current) setAnchorTop(cardRef.current.offsetTop);
   }, []);
 
-  const title = dataObjects[0]?.name || name || "Interface";
+  const title = name?.trim() || protocol || "Interface";
 
   return (
     <div
@@ -102,13 +100,9 @@ export default function InterfaceInfoCard({
               key={dataObject.id}
               className={index > 0 ? "mt-3 border-t border-border pt-3" : ""}
             >
-              {/* The first name is already in the header; the others need
-                  their own title to stay attached to their description. */}
-              {index > 0 && (
-                <div className="mb-1 truncate text-sm font-semibold text-fg" title={dataObject.name}>
-                  {dataObject.name}
-                </div>
-              )}
+              <div className="mb-1 truncate text-sm font-semibold text-fg" title={dataObject.name}>
+                {dataObject.name}
+              </div>
               <SectionLabel>Description</SectionLabel>
               {/* Rendered as text, never as markup: LeanIX descriptions can
                   carry formatting of their own. */}
