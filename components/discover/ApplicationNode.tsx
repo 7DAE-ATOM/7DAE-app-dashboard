@@ -9,6 +9,7 @@ import ResizeHorizontalIcon from "@/components/icons/ResizeHorizontalIcon";
 import InfoIcon from "@/components/icons/InfoIcon";
 import { useApplicationInfo } from "./ApplicationInfoContext";
 import ApplicationInfoCard from "./ApplicationInfoCard";
+import NodeOverlay from "./NodeOverlay";
 import CapabilityPie from "./CapabilityPie";
 import { useCapabilityColors } from "@/lib/discoverCapabilityLegend";
 
@@ -166,7 +167,11 @@ export default function ApplicationNode({
             // `nodrag`, or a click-and-hold on the title drags the rectangle
             // and the navigation never fires. `stopPropagation`, or the
             // rectangle's own click pins the highlight on the way out.
-            className="nodrag block truncate font-mono text-sm font-semibold text-fg hover:text-accent hover:underline"
+            // `self-start max-w-full`: a flex-column child stretches to the
+            // full row by default, which would make the whole band a link and
+            // steal the rectangle's drag zone — the link hugs the text instead,
+            // still truncating when the name is wider than the box.
+            className="nodrag block self-start max-w-full truncate font-mono text-sm font-semibold text-fg hover:text-accent hover:underline"
             onClick={(e) => e.stopPropagation()}
             title={`${data.name} — open the application sheet in a new tab`}
           >
@@ -199,11 +204,14 @@ export default function ApplicationNode({
           >
             <InfoIcon size={12} />
           </button>
+          {/* Out of the node, over the whole diagram — see `NodeOverlay`. */}
           {infoOpen && (
-            <ApplicationInfoCard
-              application={resolveApplication(id)}
-              onClose={() => closeApplication(id)}
-            />
+            <NodeOverlay nodeId={id}>
+              <ApplicationInfoCard
+                application={resolveApplication(id)}
+                onClose={() => closeApplication(id)}
+              />
+            </NodeOverlay>
           )}
         </>
       )}

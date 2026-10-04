@@ -68,7 +68,7 @@ export default function InterfaceInfoCard({
       role="dialog"
       onClick={(e) => e.stopPropagation()}
       onContextMenu={(e) => e.stopPropagation()}
-      className="nodrag absolute z-20 flex w-72 flex-col gap-2 rounded-card border border-border bg-surface p-3 shadow-lg"
+      className="nodrag nopan nowheel pointer-events-auto absolute flex w-72 flex-col gap-2 rounded-card border border-border bg-surface p-3 shadow-lg"
       style={{
         left: "calc(100% + 8px)",
         top: anchorTop ?? undefined,

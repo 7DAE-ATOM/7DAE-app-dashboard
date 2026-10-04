@@ -5,6 +5,7 @@ import { INTERFACE_NODE_SIZE } from "@/lib/discover-graph-layout";
 import type { DataObject } from "@/lib/types";
 import InfoIcon from "@/components/icons/InfoIcon";
 import InterfaceInfoCard from "./InterfaceInfoCard";
+import NodeOverlay from "./NodeOverlay";
 import { useApplicationInfo } from "./ApplicationInfoContext";
 import { useDiscoverDisplaySettings } from "@/lib/discoverDisplaySettings";
 
@@ -64,13 +65,16 @@ export default function InterfaceNode({
           >
             <InfoIcon size={12} />
           </button>
+          {/* Out of the node, over the whole diagram — see `NodeOverlay`. */}
           {infoOpen && (
-            <InterfaceInfoCard
-              name={data.name}
-              protocol={data.protocol}
-              dataObjects={data.dataObjects}
-              onClose={() => closeInterface(id)}
-            />
+            <NodeOverlay nodeId={id}>
+              <InterfaceInfoCard
+                name={data.name}
+                protocol={data.protocol}
+                dataObjects={data.dataObjects}
+                onClose={() => closeInterface(id)}
+              />
+            </NodeOverlay>
           )}
         </>
       )}
