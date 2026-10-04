@@ -43,9 +43,10 @@ import {
   INTERFACE_NODE_SIZE,
   MIN_APP_NODE_WIDTH,
   interfaceSlotPosition,
-  layoutRootApplications,
-  placeNewApplicationNode,
+  orientInterfaceCircles,
+  placeApplications,
   projectPointToRectanglePerimeter,
+  type PlacedBox,
 } from "@/lib/discover-graph-layout";
 import ApplicationNodeComponent, { type ApplicationNodeData } from "./ApplicationNode";
 import InterfaceNodeComponent, { type InterfaceNodeData } from "./InterfaceNode";
@@ -238,6 +239,81 @@ function boxesOf(nodes: Node[]) {
   return nodes.map((n) => ({ ...absolutePosition(n, byId), ...boxSizeOf(n) }));
 }
 
+/** The application rectangles on the canvas, as `placeApplications` takes
+ * them: obstacles that never move. Applications are never children, so their
+ * `position` is already absolute. */
+function applicationBoxes(nodes: Node[]): PlacedBox[] {
+  return nodes
+    .filter((n) => n.type === "application")
+    .map((n) => ({ id: n.id, ...n.position, ...boxSizeOf(n) }));
+}
+
+/** Application ↔ application relations behind `edges` (consumer ↔ provider),
+ * which is all `placeApplications` needs to know about the topology. */
+function applicationLinks(
+  edges: DiscoverEdge[],
+  providerOf: (interfaceId: string) => string | undefined,
+): [string, string][] {
+  return collapseToApplications(edges, providerOf).map((e) => [e.sourceId, e.targetId]);
+}
+
+/**
+ * Turns the circles of `interfaceIds` toward their consumers (see
+ * `orientInterfaceCircles`), except those the user dragged (`isManual`).
+ * Every other circle of the same providers stays where it is and is kept
+ * clear of. A circle with no consumer on the canvas keeps its default slot.
+ */
+function orientCircles(
+  nodes: Node[],
+  edges: DiscoverEdge[],
+  interfaceIds: ReadonlySet<string>,
+  isManual: (interfaceId: string) => boolean,
+): Node[] {
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  const providers = new Set<string>();
+  for (const id of interfaceIds) {
+    const node = byId.get(id);
+    if (node?.type === "interface" && node.parentId) providers.add(node.parentId);
+  }
+  if (providers.size === 0) return nodes;
+
+  const consumersOf = new Map<string, { x: number; y: number }[]>();
+  for (const e of edges) {
+    const consumer = byId.get(e.consumerId);
+    const circle = byId.get(e.interfaceId);
+    // Self-consumption says nothing about a direction.
+    if (!consumer || consumer.type !== "application" || !circle) continue;
+    if (circle.parentId === e.consumerId) continue;
+    const list = consumersOf.get(e.interfaceId) ?? [];
+    list.push(centerOf(consumer, byId));
+    consumersOf.set(e.interfaceId, list);
+  }
+
+  const updates = new Map<string, { x: number; y: number }>();
+  for (const providerId of providers) {
+    const provider = byId.get(providerId);
+    if (!provider) continue;
+    const circles = nodes
+      .filter((n) => n.type === "interface" && n.parentId === providerId)
+      .map((n) => ({
+        id: n.id,
+        position: n.position,
+        consumers: consumersOf.get(n.id) ?? [],
+        orient: interfaceIds.has(n.id) && !isManual(n.id),
+      }));
+    const oriented = orientInterfaceCircles(
+      { ...absolutePosition(provider, byId), ...boxSizeOf(provider) },
+      circles,
+    );
+    for (const [id, position] of oriented) updates.set(id, position);
+  }
+  if (updates.size === 0) return nodes;
+  return nodes.map((n) => {
+    const position = updates.get(n.id);
+    return position ? { ...n, position } : n;
+  });
+}
+
 /** Where a ray from `from` toward `to` leaves `from`'s box — same math as
  * `lib/star-graph-layout.ts`'s `boxExit`, so edges visibly touch the
  * rectangle/circle border instead of hiding under it. */
@@ -275,10 +351,10 @@ function mergeInterfaceFactSheet(
 /** Adapted from `/depgraph`'s `DependencyGraph.tsx`: plain `useState` (not
  * `useNodesState`), edges derived from `edgeMeta` + live node positions via
  * `useMemo` so dragging never touches `edgeMeta`, and every expand/hide
- * action mutates state locally — ELK runs at most once, for the initial
- * root layout: either trivially (the first `addApplication` puts a single
- * node at the origin) or through the batch `seed` effect below, which lays
- * out a whole catalogue selection in one pass. Never again afterward. */
+ * action mutates state locally. Every application that lands on the canvas —
+ * the catalogue seed, a context-menu reveal, the search box — is positioned
+ * by the one `placeApplications` strategy, which never moves what is already
+ * there. */
 const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGraph(
   {
     resolveManagerName,
@@ -410,6 +486,11 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
    * visible* nodes at assignment time, never from this map alone, so a
    * hidden interface's old slot is immediately reusable by another one. */
   const interfaceSlotRef = useRef<Map<string, number>>(new Map());
+  /** Circles placed by the user — dragged by hand, or restored from a save,
+   * which is the user's arrangement too. `orientCircles` never touches them.
+   * A circle leaves the set when it is revealed afresh. */
+  const manualCircleRef = useRef<Set<string>>(new Set());
+  const isManualCircle = useCallback((id: string) => manualCircleRef.current.has(id), []);
   const appInterfacesCache = useRef<Map<string, ApplicationInterfacesNode>>(new Map());
   const interfaceFactSheetCache = useRef<Map<string, InterfaceFactSheet>>(new Map());
 
@@ -465,6 +546,15 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
   );
 
   const onNodesChange = useCallback((changes: NodeChange[]) => {
+    for (const change of changes) {
+      if (
+        change.type === "position" &&
+        change.dragging &&
+        interfaceProviderRef.current.has(change.id)
+      ) {
+        manualCircleRef.current.add(change.id);
+      }
+    }
     setNodes((current) => {
       const next = applyNodeChanges(changes, current);
       // Interface circles are draggable, but constrained to slide along
@@ -503,9 +593,18 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
         const node = current.find((n) => n.id === appId);
         if (!node || node.type !== "application") return current;
         const oldWidth = (node.data as ApplicationNodeData).width ?? boxWidthRef.current;
-        const circleCenterXs = current
-          .filter((n) => n.type === "interface" && interfaceProviderRef.current.get(n.id) === appId)
-          .map((n) => n.position.x + INTERFACE_NODE_SIZE / 2);
+        const half = INTERFACE_NODE_SIZE / 2;
+        const ownCircles = current.filter(
+          (n) => n.type === "interface" && interfaceProviderRef.current.get(n.id) === appId,
+        );
+        // A circle on a vertical border rides with that border (see the map
+        // below), so only the top/bottom ones limit how far a border may go.
+        const onRight = (n: Node) => n.position.x + half >= oldWidth - 0.5;
+        const onLeft = (n: Node) => n.position.x + half <= 0.5;
+        const circleCenterXs = ownCircles
+          .filter((n) => !onRight(n) && !onLeft(n))
+          .map((n) => n.position.x + half);
+        const ownCircleIds = new Set(ownCircles.map((n) => n.id));
 
         let newWidth: number;
         let growth = 0;
@@ -528,11 +627,13 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
               data: { ...n.data, width: newWidth, widthPinned: true },
             };
           }
-          if (
-            growth !== 0 &&
-            n.type === "interface" &&
-            interfaceProviderRef.current.get(n.id) === appId
-          ) {
+          if (!ownCircleIds.has(n.id)) return n;
+          // The right border: wherever it ends up, in either gesture.
+          if (onRight(n)) return { ...n, position: { ...n.position, x: newWidth - half } };
+          // The left border moves with a left-edge drag, and so do its circles.
+          if (onLeft(n)) return n;
+          // Top/bottom circles keep their place on screen.
+          if (growth !== 0) {
             return { ...n, position: { ...n.position, x: n.position.x + growth } };
           }
           return n;
@@ -575,11 +676,20 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
     const half = INTERFACE_NODE_SIZE / 2;
     const current = nodesRef.current;
 
+    const widthOf = new Map<string, number>();
+    for (const n of current) {
+      if (n.type === "application") widthOf.set(n.id, boxSizeOf(n).width);
+    }
+    /** On its provider's right border — it rides with that border instead of
+     * holding it back. */
+    const onRightBorder = (n: Node, providerId: string) =>
+      n.position.x + half >= (widthOf.get(providerId) ?? Infinity) - 0.5;
+
     const floorByApp = new Map<string, number>();
     for (const n of current) {
       if (n.type !== "interface") continue;
       const providerId = n.parentId ?? interfaceProviderRef.current.get(n.id);
-      if (!providerId) continue;
+      if (!providerId || onRightBorder(n, providerId)) continue;
       floorByApp.set(providerId, Math.max(floorByApp.get(providerId) ?? 0, n.position.x + half));
     }
 
@@ -601,7 +711,10 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
       if (n.type !== "interface") return n;
       const providerId = n.parentId ?? interfaceProviderRef.current.get(n.id);
       const width = providerId ? resized.get(providerId) : undefined;
-      if (width === undefined) return n;
+      if (width === undefined || !providerId) return n;
+      if (onRightBorder(n, providerId)) {
+        return { ...n, position: { ...n.position, x: width - half } };
+      }
       const center = { x: n.position.x + half, y: n.position.y + half };
       const projected = projectPointToRectanglePerimeter(center, width, APP_NODE_HEIGHT);
       const position = { x: projected.x - half, y: projected.y - half };
@@ -705,6 +818,9 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
       let nextFreeSlot = 0;
       const newNodes = toAdd.map((iface) => {
         interfaceProviderRef.current.set(iface.id, providerId);
+        // A circle revealed afresh starts from its default slot: whatever the
+        // user did with it before it was hidden no longer applies.
+        manualCircleRef.current.delete(iface.id);
         let slot = interfaceSlotRef.current.get(iface.id);
         if (slot === undefined || usedSlots.has(slot)) {
           while (usedSlots.has(nextFreeSlot)) nextFreeSlot++;
@@ -732,18 +848,18 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
           };
           return next;
         }
-        if (current.length === 0) {
-          // Trivial ELK layout for a single node: always the origin.
-          return [makeApplicationNode(app, { x: 0, y: 0 }, true)];
-        }
-        const byId = new Map(current.map((n) => [n.id, n]));
-        const anchor = absolutePosition(current[current.length - 1], byId);
-        const position = placeNewApplicationNode(
-          anchor,
-          "right",
-          boxesOf(current),
-          boxWidthRef.current,
-        );
+        // Its relations are unknown until a context menu asks, so it lands
+        // as a group of one: the origin on an empty canvas, otherwise beside
+        // the groups already there. The canvas links are passed so that
+        // "beside" means outside each group, not in the gap of a ring.
+        const position = placeApplications({
+          fixed: applicationBoxes(current),
+          toPlace: [app.id],
+          links: applicationLinks(edgeMetaRef.current, (id) =>
+            interfaceProviderRef.current.get(id),
+          ),
+          width: boxWidthRef.current,
+        }).get(app.id) ?? { x: 0, y: 0 };
         return [...current, makeApplicationNode(app, position, true)];
       });
     },
@@ -752,10 +868,11 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
 
   /** One-shot batch seed from `/discover?ids=…`: fetch every selected
    * application's interfaces, keep only the relations internal to the
-   * selection, run ELK once over the resulting application-level graph, and
-   * commit nodes + edges in a single pass. Deliberately not expressed as N
-   * `addApplication` calls — those place each new root to the right of the
-   * previous one, which degenerates into an unreadable horizontal row. */
+   * selection, place the whole selection in one `placeApplications` call —
+   * the same strategy as every other addition, with nothing fixed yet — and
+   * commit nodes + edges in a single pass. Not N `addApplication` calls:
+   * those don't know the relations, so each root would land as a group of
+   * one and the selection would come out as a grid, links ignored. */
   /** Which selection has already been seeded, as a signature of its ids —
    * not a plain boolean. A discarded run (StrictMode's
    * mount→unmount→mount, where the first pass is cancelled mid-flight)
@@ -798,21 +915,20 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
           else byProvider.set(iface.providerId, [iface]);
         }
 
-        // ELK lays out applications only: the circles are xyflow children of
-        // their provider, so they're placed afterward, in relative coords.
-        // Hence consumer → provider edges, not consumer → interface ones.
-        const positions = await layoutRootApplications(
-          ids,
-          edges.map((e) => ({
-            id: e.id,
-            source: e.consumerId,
-            target: providerOf.get(e.interfaceId) ?? e.consumerId,
-          })),
-          boxWidthRef.current,
-        );
-        if (cancelled || superseded()) return;
+        if (superseded()) return;
+
+        // Applications only: the circles are xyflow children of their
+        // provider, placed afterward in relative coords, then turned toward
+        // their consumers.
+        const positions = placeApplications({
+          fixed: [],
+          toPlace: ids,
+          links: applicationLinks(edges, (id) => providerOf.get(id)),
+          width: boxWidthRef.current,
+        });
 
         for (const id of ids) rootIdsRef.current.add(id);
+        manualCircleRef.current = new Set();
         isBaselineUpdateRef.current = true;
         setNodes(() => {
           let next = seed.map((app) =>
@@ -821,7 +937,12 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
           for (const [providerId, providerInterfaces] of byProvider) {
             next = placeProviderInterfaces(next, providerId, providerInterfaces);
           }
-          return next;
+          return orientCircles(
+            next,
+            edges,
+            new Set(interfaces.map((i) => i.id)),
+            isManualCircle,
+          );
         });
         setEdgeMeta(edges);
         committed = true;
@@ -831,11 +952,13 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
         if (cancelled || superseded()) return;
         setSeedError(e instanceof Error ? e.message : String(e));
         // The rectangles still belong on screen — only their relations
-        // failed to load; fall back to the edgeless packing.
-        const packed = await layoutRootApplications(ids, [], boxWidthRef.current).catch(
-          () => new Map<string, { x: number; y: number }>(),
-        );
-        if (cancelled || superseded()) return;
+        // failed to load: each one is then a group of its own.
+        const packed = placeApplications({
+          fixed: [],
+          toPlace: ids,
+          links: [],
+          width: boxWidthRef.current,
+        });
         for (const id of ids) rootIdsRef.current.add(id);
         isBaselineUpdateRef.current = true;
         setNodes(
@@ -854,7 +977,7 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
       cancelled = true;
       if (!committed) seededRef.current = null;
     };
-  }, [seed, makeApplicationNode, placeProviderInterfaces, cacheApplicationInterfaces]);
+  }, [seed, makeApplicationNode, placeProviderInterfaces, cacheApplicationInterfaces, isManualCircle]);
 
   /**
    * Draws a saved diagram, replacing whatever is on the canvas.
@@ -862,7 +985,7 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
    * Mirrors the seed effect above — same fetch, same cache priming, same
    * cancellation shape — with three differences that matter:
    *
-   * - positions come from the save, so there is no ELK pass at all;
+   * - positions come from the save, so there is no placement at all;
    * - `toDiagramRelations`, not `toInternalRelations`: the latter drops any
    *   interface without a consumer in the set, which is a legitimate diagram
    *   (that is exactly what *Show inbound interfaces* produces). What was on
@@ -921,6 +1044,9 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
         interfaceSlotRef.current = new Map(
           restoredInterfaces.map((saved) => [saved.id, saved.slot]),
         );
+        // Where a save put a circle is the user's arrangement: never
+        // re-oriented afterward, like a circle dragged by hand.
+        manualCircleRef.current = new Set(restoredInterfaces.map((saved) => saved.id));
 
         // Before committing nodes and edges: an edge not yet mounted has no
         // listener, and reads its override on first render. The baseline flag
@@ -1047,24 +1173,31 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
       const data = await ensureAppInterfaces(appId);
       if (!data) return;
       const { interfaces, providers, edges } = toOutboundInterfacesAndProviders(data);
+      const known = new Set(edgeMetaRef.current.map((e) => e.id));
+      const newEdges = edges.filter((e) => !known.has(e.id));
+      const allEdges = [...edgeMetaRef.current, ...newEdges];
+      const providerOfInterface = new Map(interfaces.map((i) => [i.id, i.providerId]));
 
       setNodes((current) => {
-        let next = current;
-        const existingIds = new Set(next.map((n) => n.id));
-        const anchor = next.find((n) => n.id === appId)?.position ?? { x: 0, y: 0 };
-        let cursor = anchor;
-        for (const provider of providers) {
-          if (existingIds.has(provider.id)) continue;
-          const position = placeNewApplicationNode(
-            cursor,
-            "left",
-            boxesOf(next),
-            boxWidthRef.current,
-          );
-          next = [...next, makeApplicationNode(provider, position, false)];
-          existingIds.add(provider.id);
-          cursor = position;
-        }
+        const existingIds = new Set(current.map((n) => n.id));
+        const toPlace = providers.filter(
+          (p, i) => !existingIds.has(p.id) && providers.findIndex((q) => q.id === p.id) === i,
+        );
+        const positions = placeApplications({
+          fixed: applicationBoxes(current),
+          toPlace: toPlace.map((p) => p.id),
+          links: applicationLinks(
+            allEdges,
+            (id) => providerOfInterface.get(id) ?? interfaceProviderRef.current.get(id),
+          ),
+          width: boxWidthRef.current,
+        });
+        let next = [
+          ...current,
+          ...toPlace.map((p) =>
+            makeApplicationNode(p, positions.get(p.id) ?? { x: 0, y: 0 }, false),
+          ),
+        ];
         const byProvider = new Map<string, DiscoverInterfaceNode[]>();
         for (const iface of interfaces) {
           if (existingIds.has(iface.id)) continue;
@@ -1074,18 +1207,23 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
         for (const [providerId, ifaces] of byProvider) {
           next = placeProviderInterfaces(next, providerId, ifaces);
         }
-        return next;
+        return orientCircles(
+          next,
+          allEdges,
+          new Set(newEdges.map((e) => e.interfaceId)),
+          isManualCircle,
+        );
       });
 
-      setEdgeMeta((current) => {
-        const existingIds = new Set(current.map((e) => e.id));
-        return [...current, ...edges.filter((e) => !existingIds.has(e.id))];
-      });
+      if (newEdges.length > 0) setEdgeMeta((current) => [...current, ...newEdges]);
     },
-    [ensureAppInterfaces, makeApplicationNode, placeProviderInterfaces],
+    [ensureAppInterfaces, makeApplicationNode, placeProviderInterfaces, isManualCircle],
   );
 
-  const revealInterfaceDependencies = useCallback(
+  /** What revealing an interface's dependencies brings in — fetched (once,
+   * then cached) but not yet placed, so that a command spanning several
+   * interfaces can place everything it reveals in one go. */
+  const loadInterfaceDependencies = useCallback(
     async (ifaceId: string) => {
       let fs = interfaceFactSheetCache.current.get(ifaceId);
       if (!fs || !fs.relInterfaceToConsumerApplication || !fs.relInterfaceToProviderApplication) {
@@ -1095,52 +1233,109 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
           fs = interfaceFactSheetCache.current.get(ifaceId);
         }
       }
-      if (!fs) return;
-      const { consumers, edges: newEdges } = toInterfaceConsumers(fs);
-      const provider = toInterfaceProvider(fs);
+      if (!fs) return null;
+      const { consumers, edges } = toInterfaceConsumers(fs);
+      return { ifaceId, consumers, edges, provider: toInterfaceProvider(fs) };
+    },
+    [cacheInterfaceFactSheet],
+  );
+
+  /**
+   * Reveals the provider and the consumers of every interface in `ifaceIds`,
+   * placed **together** by one `placeApplications` call: a ring (or an
+   * outward fan) around the application they hang off, instead of one
+   * placement per interface, each starting over from its own circle — which
+   * is what stacked them all on one side, as a staircase.
+   *
+   * `provided` are circles to add to their provider in the same commit —
+   * *Show dependencies* on an application reveals its interfaces and their
+   * consumers at once, and the circles have to exist to be turned toward
+   * those consumers.
+   */
+  const revealDependencies = useCallback(
+    async (
+      ifaceIds: string[],
+      provided?: { providerId: string; interfaces: DiscoverInterfaceNode[] },
+    ) => {
+      // One at a time, as before: only the ones not cached yet are fetched,
+      // and an application rarely provides more than a handful.
+      const loaded: NonNullable<Awaited<ReturnType<typeof loadInterfaceDependencies>>>[] = [];
+      for (const id of ifaceIds) {
+        const result = await loadInterfaceDependencies(id);
+        if (result) loaded.push(result);
+      }
+      const known = new Set(edgeMetaRef.current.map((e) => e.id));
+      const newEdges: DiscoverEdge[] = [];
+      for (const result of loaded) {
+        for (const e of result.edges) {
+          if (known.has(e.id)) continue;
+          known.add(e.id);
+          newEdges.push(e);
+        }
+      }
+      const allEdges = [...edgeMetaRef.current, ...newEdges];
+      const providerOfInterface = new Map<string, string>();
+      for (const result of loaded) {
+        if (result.provider) providerOfInterface.set(result.ifaceId, result.provider.id);
+      }
 
       setNodes((current) => {
-        let next = current;
+        let next = provided
+          ? placeProviderInterfaces(current, provided.providerId, provided.interfaces)
+          : current;
         const existingIds = new Set(next.map((n) => n.id));
-        const ifaceAnchor = () => {
-          const byId = new Map(next.map((n) => [n.id, n]));
-          const iface = byId.get(ifaceId);
-          return iface ? absolutePosition(iface, byId) : { x: 0, y: 0 };
+        // Providers first, then consumers interface by interface: the order
+        // decides the slots, so one interface's consumers sit side by side.
+        const toPlace: DiscoverApplicationNode[] = [];
+        const queued = new Set<string>();
+        const enqueue = (app: DiscoverApplicationNode) => {
+          if (existingIds.has(app.id) || queued.has(app.id)) return;
+          queued.add(app.id);
+          toPlace.push(app);
         };
-        if (provider && !existingIds.has(provider.id)) {
-          const position = placeNewApplicationNode(
-            ifaceAnchor(),
-            "left",
-            boxesOf(next),
-            boxWidthRef.current,
-          );
-          next = [...next, makeApplicationNode(provider, position, false)];
-          existingIds.add(provider.id);
-          interfaceProviderRef.current.set(ifaceId, provider.id);
+        for (const result of loaded) if (result.provider) enqueue(result.provider);
+        for (const result of loaded) for (const c of result.consumers) enqueue(c);
+
+        if (toPlace.length > 0) {
+          const parentOf = new Map(next.map((n) => [n.id, n.parentId]));
+          const positions = placeApplications({
+            fixed: applicationBoxes(next),
+            toPlace: toPlace.map((a) => a.id),
+            links: applicationLinks(
+              allEdges,
+              (id) =>
+                providerOfInterface.get(id) ??
+                interfaceProviderRef.current.get(id) ??
+                parentOf.get(id),
+            ),
+            width: boxWidthRef.current,
+          });
+          next = [
+            ...next,
+            ...toPlace.map((a) =>
+              makeApplicationNode(a, positions.get(a.id) ?? { x: 0, y: 0 }, false),
+            ),
+          ];
+          for (const result of loaded) {
+            if (result.provider && queued.has(result.provider.id)) {
+              interfaceProviderRef.current.set(result.ifaceId, result.provider.id);
+            }
+          }
         }
-        const missingConsumers = consumers.filter((c) => !existingIds.has(c.id));
-        if (missingConsumers.length === 0) return next;
-        let cursor = ifaceAnchor();
-        const added: Node[] = [];
-        for (const c of missingConsumers) {
-          const position = placeNewApplicationNode(
-            cursor,
-            "right",
-            boxesOf([...next, ...added]),
-            boxWidthRef.current,
-          );
-          added.push(makeApplicationNode(c, position, false));
-          cursor = position;
-        }
-        return [...next, ...added];
+        return orientCircles(
+          next,
+          allEdges,
+          new Set([
+            ...loaded.map((r) => r.ifaceId),
+            ...(provided?.interfaces ?? []).map((i) => i.id),
+          ]),
+          isManualCircle,
+        );
       });
 
-      setEdgeMeta((current) => {
-        const existingIds = new Set(current.map((e) => e.id));
-        return [...current, ...newEdges.filter((e) => !existingIds.has(e.id))];
-      });
+      if (newEdges.length > 0) setEdgeMeta((current) => [...current, ...newEdges]);
     },
-    [cacheInterfaceFactSheet, makeApplicationNode],
+    [loadInterfaceDependencies, makeApplicationNode, placeProviderInterfaces, isManualCircle],
   );
 
   const handleShowDependencies = useCallback(
@@ -1149,7 +1344,7 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
       const node = nodesRef.current.find((n) => n.id === nodeId);
       if (!node) return;
       if (node.type !== "application") {
-        await revealInterfaceDependencies(nodeId);
+        await revealDependencies([nodeId]);
         return;
       }
       // The interfaces this application provides, **from the model** rather
@@ -1162,18 +1357,13 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
       // Cached after the first call, so a second click asks for nothing.
       const data = await ensureAppInterfaces(nodeId);
       const provided = data ? toInboundInterfaces(data) : [];
-      // Skips whatever is already there, so replaying the command adds
-      // nothing.
-      if (provided.length > 0) {
-        setNodes((current) => placeProviderInterfaces(current, nodeId, provided));
-      }
 
       const visibleIds = new Set(nodesRef.current.map((n) => n.id));
       const attached = new Set<string>();
-      // Built from `provided`, never from the nodes: `setNodes` above hasn't
-      // landed yet, so reading the canvas here would reproduce the very bug
-      // this fixes, one pass late. When the query failed, `provided` is empty
-      // and the visible providers below are all we can fall back on.
+      // Built from `provided`, never from the nodes: the circles are only
+      // added by `revealDependencies` below. When the query failed,
+      // `provided` is empty and the visible providers below are all we can
+      // fall back on.
       for (const iface of provided) attached.add(iface.id);
       for (const [ifaceId, providerId] of interfaceProviderRef.current) {
         if (providerId === nodeId && visibleIds.has(ifaceId)) attached.add(ifaceId);
@@ -1181,11 +1371,14 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
       for (const e of edgeMetaRef.current) {
         if (e.consumerId === nodeId && visibleIds.has(e.interfaceId)) attached.add(e.interfaceId);
       }
-      for (const ifaceId of attached) {
-        await revealInterfaceDependencies(ifaceId);
-      }
+      // Skips whatever is already there, so replaying the command adds
+      // nothing.
+      await revealDependencies(
+        [...attached],
+        provided.length > 0 ? { providerId: nodeId, interfaces: provided } : undefined,
+      );
     },
-    [ensureAppInterfaces, placeProviderInterfaces, revealInterfaceDependencies],
+    [ensureAppInterfaces, revealDependencies],
   );
 
   /** Application rectangles currently on the canvas whose interfaces haven't
@@ -1253,13 +1446,14 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
     const known = new Set(edgeMetaRef.current.map((e) => e.id));
     const fresh = edges.filter((e) => !known.has(e.id));
 
-    if (interfaces.length > 0) {
+    if (interfaces.length > 0 || fresh.length > 0) {
       const byProvider = new Map<string, DiscoverInterfaceNode[]>();
       for (const iface of interfaces) {
         const list = byProvider.get(iface.providerId);
         if (list) list.push(iface);
         else byProvider.set(iface.providerId, [iface]);
       }
+      const allEdges = [...edgeMetaRef.current, ...fresh];
       // One write for the whole canvas: looping `setNodes` per application
       // would make the graph flicker and re-render React Flow each time.
       setNodes((current) => {
@@ -1267,7 +1461,13 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
         for (const [providerId, ifaces] of byProvider) {
           next = placeProviderInterfaces(next, providerId, ifaces);
         }
-        return next;
+        // Every circle that gained a consumer turns toward its consumers.
+        return orientCircles(
+          next,
+          allEdges,
+          new Set(fresh.map((e) => e.interfaceId)),
+          isManualCircle,
+        );
       });
     }
     if (fresh.length > 0) {
@@ -1275,7 +1475,7 @@ const DiscoverGraph = forwardRef<DiscoverGraphHandle, Props>(function DiscoverGr
     }
 
     return { flows: fresh.length, incomplete };
-  }, [cacheApplicationInterfaces, placeProviderInterfaces]);
+  }, [cacheApplicationInterfaces, placeProviderInterfaces, isManualCircle]);
 
   const handleHide = useCallback(
     (nodeId: string) => {

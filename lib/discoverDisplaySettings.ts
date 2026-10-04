@@ -33,9 +33,9 @@ export const EDGE_CURVATURE_NEUTRAL = 50;
 
 /** Bounds of the Box width slider. The floor mirrors `MIN_APP_NODE_WIDTH` and
  * the default mirrors `APP_NODE_WIDTH`, both in `lib/discover-graph-layout.ts`
- * — repeated as literals rather than imported, because that module pulls in
- * elkjs at the top level and this store is read by every node, edge and
- * toolbar button of the Discover view. */
+ * — repeated as literals rather than imported, so that this store, read by
+ * every node, edge and toolbar button of the Discover view, depends on
+ * nothing but itself. Keep the two in step. */
 export const BOX_WIDTH_MIN = 120;
 export const BOX_WIDTH_MAX = 400;
 export const BOX_WIDTH_STEP = 10;

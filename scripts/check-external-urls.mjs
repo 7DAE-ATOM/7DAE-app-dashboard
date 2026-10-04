@@ -43,7 +43,6 @@ const INERT_ALLOWED = {
   "react.dev": "React dev-warning documentation links",
   "reactjs.org": "legacy React warning links",
   "reactflow.dev": "@xyflow/react error links",
-  "www.eclipse.org": "elkjs (Eclipse Layout Kernel) header",
   "github.com": "vendor issue-tracker links inside error strings",
   "tools.ietf.org": "RFC references in @react-pdf/renderer",
   "www.aiim.org": "XMP/PDF metadata namespace (@react-pdf/renderer)",
