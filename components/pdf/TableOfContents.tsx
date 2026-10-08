@@ -1,5 +1,6 @@
 import { Page, Text, View, Link } from "@react-pdf/renderer";
 import type { Application } from "@/lib/types";
+import { applicationHref } from "@/lib/url";
 import { styles, colors } from "./styles";
 
 type Props = {
@@ -52,7 +53,7 @@ export default function TableOfContents({ applications, baseUrl }: Props) {
               {a.externalId}
             </Text>
             <Link
-              src={`${baseUrl}/application?id=${encodeURIComponent(a.externalId)}`}
+              src={`${baseUrl}${applicationHref(a.externalId)}`}
               style={{ width: 18, textAlign: "right" }}
             >
               <Text style={{ ...styles.small, color: colors.accent }}>↗</Text>

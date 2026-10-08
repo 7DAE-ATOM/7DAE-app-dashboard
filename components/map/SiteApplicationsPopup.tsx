@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import type { Application } from "@/lib/types";
+import { applicationHref } from "@/lib/url";
 
 export type PopupSection = {
   /** Omitted when the popup has a single, self-evident list. */
@@ -118,9 +119,10 @@ export default function SiteApplicationsPopup({
                           anyway, and every detail link resolves to the SAME
                           static page — Next's viewport prefetch would fire one
                           request per row and flood the gateway (see the comment
-                          on components/ApplicationCard.tsx). */}
+                          on components/ApplicationCard.tsx). Hence also
+                          `applicationHref`: no Link to add the gateway context. */}
                       <a
-                        href={`/application?id=${encodeURIComponent(application.externalId)}`}
+                        href={applicationHref(application.externalId)}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="block truncate rounded px-2 py-1 text-sm text-fg hover:bg-surface-2 focus:outline-none focus:ring-2 focus:ring-accent"

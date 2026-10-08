@@ -24,6 +24,7 @@ import {
   PROVIDER_TYPE_LABELS,
 } from "@/lib/labels";
 import { formatDate } from "@/lib/format-date";
+import { applicationHref } from "@/lib/url";
 
 type Props = {
   application: Application;
@@ -252,7 +253,7 @@ export default function ApplicationDetailPage({ application: app, baseUrl }: Pro
         fixed
       >
         <Link
-          src={`${baseUrl}/application?id=${encodeURIComponent(app.externalId)}`}
+          src={`${baseUrl}${applicationHref(app.externalId)}`}
           style={{ ...styles.small, color: colors.accent }}
         >
           <Text>View on dashboard ↗</Text>

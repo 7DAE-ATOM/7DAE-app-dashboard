@@ -51,7 +51,8 @@ const nextConfig = {
   // -deleted backend proxy/rewrite): it affects ONLY Next page routes and <Link>,
   // never the hand-built API calls in lib/atom-api.ts.
   trailingSlash: true,
-  // basePath/assetPrefix come from BASE_HREF, set by Jenkins for prod only.
+  // basePath/assetPrefix come from BASE_HREF, set by Jenkins for val and prod
+  // builds (both are served under the gateway context), unset in dev.
   basePath: process.env.BASE_HREF || "",
   assetPrefix: process.env.BASE_HREF || "",
   // Inlined into the client bundle at build time (the App is a static export,

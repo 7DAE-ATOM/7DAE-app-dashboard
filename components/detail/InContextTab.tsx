@@ -6,6 +6,7 @@ import StarGraph, {
 } from "@/components/StarGraph";
 import { useApplicationLinks } from "@/lib/useApplicationLinks";
 import type { Application, LinkDirection } from "@/lib/types";
+import { applicationHref } from "@/lib/url";
 
 const EDGE_DIRECTION: Record<LinkDirection, StarEdgeDirection> = {
   inbound: "in",
@@ -121,9 +122,8 @@ export default function InContextTab({
           sublabel: application.externalId,
         }}
         neighbors={neighbors}
-        nodeHref={(externalId) =>
-          `/application?id=${encodeURIComponent(externalId)}`
-        }
+        // StarGraph draws raw SVG anchors: the gateway context has to be in the href.
+        nodeHref={applicationHref}
         ariaLabel={`${application.name} and its ${neighbors.length} linked applications`}
       />
       <div className="flex flex-wrap items-center gap-x-6 gap-y-2 border-t border-border pt-4">
